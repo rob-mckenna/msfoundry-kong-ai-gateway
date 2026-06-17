@@ -5,6 +5,16 @@ This guide documents the validated Phase 4 integration shape for connecting a Fo
 > [!WARNING]
 > The current JWT setup is **POC only**. It uses `iss=kong-poc` and the shared secret `poc-secret-change-me` with HS256. Replace it before any production use.
 
+## Quick Setup
+
+For the fastest path to a working Foundry connection:
+
+1. Generate a gateway JWT with:
+   - `bash scripts/generate-foundry-jwt.sh`
+   - `.\scripts\generate-foundry-jwt.ps1`
+2. Follow the portal walkthrough in `docs/foundry-setup-guide.md`
+3. Review `docs/foundry-auth-analysis.md` for production options and tradeoffs
+
 ## Architecture Overview
 
 ```text
@@ -46,6 +56,48 @@ Microsoft Foundry client / agent
 - A token provisioning path for the Kong JWT
 
 Because Foundry UX varies, treat the remainder of this guide as a value map rather than a click-by-click UI walkthrough.
+
+## Foundry Authentication Mapping
+
+Our current Kong MCP Gateway auth maps to **Foundry key-based authentication**:
+
+- **Foundry auth method:** key-based authentication
+- **Credential name:** `Authorization`
+- **Credential value:** `Bearer <generated-jwt-token>`
+- **Why it fits:** Kong validates a shared HS256 bearer token today, and Foundry project connections can store and replay that header value on each MCP request
+
+This is a shared service identity model. It is appropriate for the current POC, but it does **not** preserve per-user identity. If we later need user context, we should move toward OAuth identity passthrough. If we want secretless service-to-service auth, we should evaluate Microsoft Entra authentication.
+
+## JWT Token Generation
+
+Use one of the included helper scripts to generate a token for the Foundry project connection.
+
+### Bash
+
+```bash
+bash scripts/generate-foundry-jwt.sh
+bash scripts/generate-foundry-jwt.sh --ttl 3600 --issuer kong-poc --subject foundry-poc
+```
+
+### PowerShell
+
+```powershell
+.\scripts\generate-foundry-jwt.ps1
+.\scripts\generate-foundry-jwt.ps1 -TtlSeconds 3600 -Issuer kong-poc -Subject foundry-poc
+```
+
+Environment variable support:
+
+- `KONG_JWT_SECRET` or `JWT_SECRET`
+- `JWT_ISSUER`
+- `JWT_TTL_SECONDS`
+- `JWT_SUBJECT`
+
+Paste the output into the Foundry project connection as:
+
+```text
+Authorization: Bearer <generated-jwt-token>
+```
 
 ## Authentication Flow
 
@@ -419,6 +471,8 @@ Before production, change the following:
 
 - `README.md`
 - `docs/architecture.md`
+- `docs/foundry-auth-analysis.md`
+- `docs/foundry-setup-guide.md`
 - `test/README.md`
 - `.squad/decisions.md`
 - `.squad/decisions/decisions.md`
