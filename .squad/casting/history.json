@@ -1,0 +1,17 @@
+{
+  "universe_usage_history": [
+    {
+      "universe": "The Usual Suspects",
+      "first_used": "2026-06-16T18:23:00Z",
+      "repo": "msf-kong-ai-gateway-test1"
+    }
+  ],
+  "assignment_cast_snapshots": {
+    "assignment-001": {
+      "assignment_id": "assignment-001",
+      "universe": "The Usual Suspects",
+      "created_at": "2026-06-16T18:23:00Z",
+      "agents": ["Keaton", "McManus", "Fenster", "Hockney"]
+    }
+  }
+}

@@ -92,6 +92,23 @@ Consolidate to `deploy-simple.sh` and delete `deploy.sh`.
 
 ---
 
+### Decision 4: JWT Plugin Fix — Two Root Causes
+**Author:** Fenster + Coordinator  
+**Date:** 2026-06-17T03:05:00Z  
+**Status:** Fixed
+
+**What:** Fixed Kong JWT returning "No credentials found for given 'iss'" by addressing two issues:
+
+1. **Plugin execution order**: Changed managed identity token injection from `pre-function` (priority 1000000, runs BEFORE jwt) to `post-function` (priority -1000, runs AFTER jwt). The pre-function was overwriting the Authorization header before JWT could validate the client token.
+
+2. **Format version bug**: Changed `_format_version` from `"3.0"` to `"2.1"`. Kong 3.7's format_version 3.0 has a bug where `jwt_secrets` nested under `consumers` don't get properly indexed for credential lookup.
+
+**Why:** Blocked end-to-end flow. Now working: client JWT → Kong validates → post-function injects managed identity token → Azure OpenAI processes request.
+
+**Impact:** Full pipeline operational.
+
+---
+
 ## Governance
 
 - All meaningful changes require team consensus
