@@ -54,6 +54,42 @@ Both scripts support these environment variables:
 - `INVALID_JWT_TOKEN` — optional invalid-token override
 - `KEEP_TEST_ARTIFACTS=1` — keep scratch files under `test/.tmp-mcp-gateway-*`
 
+## Foundry-specific validation scenarios
+
+These scripts do not automate Foundry itself, but they validate the exact gateway behavior Foundry depends on.
+
+### How Foundry would authenticate
+
+- Foundry should send `Authorization: Bearer <jwt>` on both:
+  - `GET /mcp/sse`
+  - `POST /mcp/messages?sessionId=<uuid>`
+- For the current POC, the token must use:
+  - `iss=kong-poc`
+  - `HS256`
+  - secret `poc-secret-change-me`
+
+### Expected tool invocation pattern
+
+Foundry should follow the same sequence used by the test suite:
+
+1. Open `GET /mcp/sse`
+2. Read the bootstrap event and extract `sessionId`
+3. Send `initialize`
+4. Send `notifications/initialized`
+5. Send `tools/list`
+6. Send `tools/call` for `get_weather` or `calculate`
+
+### Validation steps for Foundry integration
+
+1. Run `bash test/test-mcp-gateway.sh` to confirm the gateway baseline is healthy.
+2. Register `https://kongai-gw.graycoast-a8631da5.eastus2.azurecontainerapps.io/mcp/sse` as the Foundry MCP endpoint.
+3. Provide the same JWT auth header Foundry will use in production-like testing.
+4. Confirm Foundry discovers both tools.
+5. Trigger at least these two scenarios from Foundry:
+   - weather request for a city such as Seattle
+   - calculation request such as multiply 6 by 7
+6. Verify Foundry receives structured tool results and can incorporate them into its response.
+
 ## Run the Bash script
 
 ```bash
@@ -122,6 +158,7 @@ Failed: 0
 
 - The SSE handshake may have succeeded while the companion `/mcp/messages` route failed
 - Retry with `KEEP_TEST_ARTIFACTS=1` and inspect the captured files in `test/.tmp-mcp-gateway-*`
+- In Foundry scenarios, also confirm the bearer token is sent on the POST leg, not just the initial SSE request
 
 ### `/chat` fails but MCP passes
 

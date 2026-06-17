@@ -144,11 +144,89 @@ curl -i "$FQDN/chat" \
 
 If your Azure OpenAI deployment name differs from `gpt-4.1`, replace the `model` value accordingly.
 
+## Phase 4 — Microsoft Foundry Integration
+
+This phase documents how to point a Foundry MCP-capable client at the deployed Kong gateway. Foundry product surfaces can label the settings differently, so use the values below when configuring a custom MCP server or external tool connector.
+
+### Microsoft Foundry Integration
+
+#### Prerequisites
+
+- A Foundry workspace and project where custom MCP server registration is allowed
+- A Foundry client or agent surface that supports **SSE-based MCP** connections
+- Outbound HTTPS connectivity from Foundry to:
+  - `https://kongai-gw.graycoast-a8631da5.eastus2.azurecontainerapps.io/mcp/sse`
+  - `https://kongai-gw.graycoast-a8631da5.eastus2.azurecontainerapps.io/mcp/messages`
+- A way to provision and store a bearer token for the gateway
+- Agreement that the current auth model is **POC only**:
+  - issuer: `kong-poc`
+  - algorithm: `HS256`
+  - secret: `poc-secret-change-me`
+
+#### Configuration Steps
+
+1. **Configure the MCP endpoint in Foundry**
+   - Register the Kong MCP Gateway SSE endpoint:
+     - `https://kongai-gw.graycoast-a8631da5.eastus2.azurecontainerapps.io/mcp/sse`
+   - Set the transport to **Server-Sent Events (SSE)**.
+   - Do not hardcode a session-specific `/mcp/messages` URL up front; the SSE bootstrap flow returns the `sessionId` that Foundry must use.
+2. **Set up authentication**
+   - Provision a JWT signed with the POC secret and `iss=kong-poc`.
+   - Configure Foundry to send `Authorization: Bearer <token>` when opening `GET /mcp/sse`.
+   - Ensure the same bearer token is also sent on subsequent `POST /mcp/messages?sessionId=<uuid>` calls.
+   - For production, replace the shared secret model with managed key storage and the auth mechanism required by your Foundry environment.
+3. **Register the MCP server**
+   - After the SSE connection opens, Foundry should:
+     - read the bootstrap event containing the message endpoint
+     - send `initialize`
+     - send `notifications/initialized`
+     - send `tools/list`
+   - Successful registration exposes the gateway tools to the Foundry agent/session.
+
+#### Available Tools
+
+- `get_weather(location: string)` — returns mock weather data for the requested city
+- `calculate(operation: string, a: number, b: number)` — performs `add`, `subtract`, or `multiply`
+
+#### Testing
+
+- First validate the gateway directly with:
+  - `bash test/test-mcp-gateway.sh`
+- Then validate from Foundry:
+  1. Connect to the MCP server
+  2. Confirm `tools/list` returns `get_weather` and `calculate`
+  3. Ask Foundry to invoke:
+     - `get_weather` with a prompt such as “What is the weather in Seattle?”
+     - `calculate` with a prompt such as “Multiply 6 and 7.”
+
+#### Expected Behavior
+
+- Foundry should show a successful MCP connection and tool discovery result.
+- `get_weather` should return structured weather fields including `location`, `temperature`, `condition`, `humidity`, and `timestamp`.
+- `calculate` should return `operation`, `a`, `b`, and `result`.
+- When the Foundry experience supports tool-aware answers, the model should incorporate the tool result into its response.
+
+#### Troubleshooting
+
+- **401 / 403 from `/mcp/sse` or `/mcp/messages`:** confirm the JWT is unexpired, signed with `poc-secret-change-me`, and uses `iss=kong-poc`.
+- **SSE opens but tools never load:** Foundry may not be sending follow-up `POST /mcp/messages?sessionId=...` requests or may be omitting the bearer token on those requests.
+- **404 `Unknown MCP session`:** the `sessionId` from the SSE bootstrap was not preserved or the SSE session closed before the POST request was sent.
+- **Timeouts or stalled tool calls:** verify the client supports SSE transports and that `/mcp/sse` and `/mcp/messages` remain routed through Kong.
+- **Protocol mismatch:** validate that the Foundry MCP client supports the same JSON-RPC-over-SSE pattern used by this gateway.
+
+For the full guide, see:
+
+- `docs/foundry-integration.md`
+- `docs/architecture.md`
+
 ## Project Structure
 
 ```text
 .
 ├── Dockerfile                  # Kong 3.7 image with custom entrypoint for managed identity env capture
+├── docs/
+│   ├── architecture.md         # End-to-end architecture, deployment flow, and key decisions
+│   └── foundry-integration.md  # Detailed Microsoft Foundry integration guide
 ├── kong.yaml                   # Declarative Kong config: consumer, service, route, plugins
 ├── infra/
 │   ├── acr.bicep               # Phase 1 infra: ACR, Log Analytics, Container App Environment
