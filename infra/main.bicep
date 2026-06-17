@@ -89,6 +89,22 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'KONG_UNTRUSTED_LUA'
               value: 'on'
             }
+            {
+              name: 'KONG_PROXY_BUFFERING'
+              value: 'off'
+            }
+            {
+              name: 'KONG_NGINX_HTTP_PROXY_BUFFERING'
+              value: 'off'
+            }
+            {
+              name: 'KONG_NGINX_PROXY_PROXY_SEND_TIMEOUT'
+              value: '600s'
+            }
+            {
+              name: 'KONG_NGINX_PROXY_PROXY_READ_TIMEOUT'
+              value: '600s'
+            }
           ], length(openAiApiKey) > 0 ? [
             {
               name: 'OPENAI_API_KEY'

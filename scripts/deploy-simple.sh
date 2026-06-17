@@ -5,10 +5,12 @@ export MSYS_NO_PATHCONV=1
 RG="rg-kong-aca"
 LOCATION="eastus2"
 NAME_PREFIX="kongai"
-IMAGE_TAG="kong-ai-gw:1.0"
+IMAGE_TAG="kong-ai-gw:1.11"
 MOCK_API_IMAGE_TAG="mock-api:1.0"
+MCP_SERVER_IMAGE_TAG="mcp-server:1.0"
 INFRA_DEPLOYMENT="${NAME_PREFIX}-infra"
 MOCK_API_DEPLOYMENT="${NAME_PREFIX}-mock-api"
+MCP_SERVER_DEPLOYMENT="${NAME_PREFIX}-mcp-server"
 APP_DEPLOYMENT="${NAME_PREFIX}-app"
 
 # ---------------------------------------------------------------------------
@@ -68,6 +70,34 @@ MOCK_API_FQDN=$(az deployment group show -g "$RG" -n "$MOCK_API_DEPLOYMENT" --qu
 echo "==> Mock API deployed: $MOCK_API_NAME (internal FQDN: $MOCK_API_FQDN)"
 
 # ---------------------------------------------------------------------------
+# Phase 2.6: Build MCP Server image and deploy MCP Server Container App
+# ---------------------------------------------------------------------------
+echo "==> [Phase 2.6] Building MCP Server image in ACR..."
+az acr build \
+  --registry "$ACR_NAME" \
+  --image "$MCP_SERVER_IMAGE_TAG" \
+  ./mcp-server
+
+echo "==> [Phase 2.6] Deploying MCP Server Container App..."
+az deployment group create \
+  -g "$RG" \
+  -n "$MCP_SERVER_DEPLOYMENT" \
+  -f infra/mcp-server.bicep \
+  -p namePrefix="$NAME_PREFIX" \
+     location="$LOCATION" \
+     containerImage="$ACR_LOGIN/$MCP_SERVER_IMAGE_TAG" \
+     acrName="$ACR_NAME" \
+     containerAppEnvId="$ENV_ID" \
+     mockApiUrl="https://$MOCK_API_FQDN" \
+  --mode Incremental \
+  --output none
+
+MCP_SERVER_NAME=$(az deployment group show -g "$RG" -n "$MCP_SERVER_DEPLOYMENT" --query "properties.outputs.containerAppName.value" -o tsv)
+MCP_SERVER_FQDN=$(az deployment group show -g "$RG" -n "$MCP_SERVER_DEPLOYMENT" --query "properties.outputs.containerAppFqdn.value" -o tsv)
+
+echo "==> MCP Server deployed: $MCP_SERVER_NAME (internal FQDN: $MCP_SERVER_FQDN)"
+
+# ---------------------------------------------------------------------------
 # Phase 3: Deploy Kong Container App with the custom image
 # ---------------------------------------------------------------------------
 echo "==> [Phase 3] Deploying Container App with custom image $ACR_LOGIN/$IMAGE_TAG..."
@@ -95,4 +125,7 @@ echo ""
 echo "Mock API:"
 echo "  App Name : $MOCK_API_NAME"
 echo "  Internal : $MOCK_API_FQDN (accessible only from within Container App Environment)"
-
+echo ""
+echo "MCP Server:"
+echo "  App Name : $MCP_SERVER_NAME"
+echo "  Internal : $MCP_SERVER_FQDN (accessible only from within Container App Environment)"

@@ -57,11 +57,12 @@ az account set --subscription "<your-subscription-id-or-name>"
 
 ## Quick Start / Deployment
 
-This repo uses a **3-phase manual deployment** script:
+This repo uses a **4-phase manual deployment** script:
 
 1. Provision **ACR**, **Log Analytics**, and **Container App Environment**
 2. Build the Kong image in **ACR cloud build** (`az acr build`) — **no local Docker required**
-3. Deploy the **Container App** with that image
+3. Build and deploy the internal **Mock API** and **MCP Server** Container Apps
+4. Deploy the **Kong Container App** with its custom image
 
 Run:
 
@@ -151,11 +152,13 @@ If your Azure OpenAI deployment name differs from `gpt-4.1`, replace the `model`
 ├── kong.yaml                   # Declarative Kong config: consumer, service, route, plugins
 ├── infra/
 │   ├── acr.bicep               # Phase 1 infra: ACR, Log Analytics, Container App Environment
-│   └── main.bicep              # Container App deploy: probes, ACR auth, runtime env
+│   ├── main.bicep              # Kong Container App deploy: probes, ACR auth, runtime env
+│   ├── mock-api.bicep          # Internal Mock API Container App
+│   └── mcp-server.bicep        # Internal MCP Server Container App
 ├── mock-api/                   # Internal mock REST API used by the MCP server
 ├── mcp-server/                 # MCP-over-SSE server that wraps mock-api endpoints as tools
 ├── scripts/
-│   └── deploy-simple.sh        # 3-phase manual deployment script
+│   └── deploy-simple.sh        # 4-phase manual deployment script
 └── .github/
     └── workflows/
         └── deploy.yml          # CI/CD workflow (planned / being created in parallel; may be absent here)

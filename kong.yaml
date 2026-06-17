@@ -115,3 +115,51 @@ services:
           - "/chat"
         methods:
           - POST
+  - name: mcp-service
+    url: https://kongai-mcp-server.internal.graycoast-a8631da5.eastus2.azurecontainerapps.io
+    plugins:
+      - name: jwt
+        config:
+          claims_to_verify:
+            - exp
+          uri_param_names:
+            - jwt
+          key_claim_name: iss
+          secret_is_base64: false
+      - name: cors
+        config:
+          origins:
+            - "*"
+          methods:
+            - GET
+            - POST
+            - OPTIONS
+          headers:
+            - Accept
+            - Content-Type
+            - Authorization
+            - Cache-Control
+            - Connection
+          exposed_headers:
+            - Content-Type
+            - Cache-Control
+            - Connection
+          credentials: true
+          max_age: 3600
+    routes:
+      - name: mcp-sse-route
+        paths:
+          - "/mcp/sse"
+        methods:
+          - GET
+          - OPTIONS
+        strip_path: false
+        preserve_host: false
+      - name: mcp-messages-route
+        paths:
+          - "/mcp/messages"
+        methods:
+          - POST
+          - OPTIONS
+        strip_path: false
+        preserve_host: false
