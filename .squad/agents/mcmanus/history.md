@@ -61,3 +61,47 @@
 - **Environment Variables:** Staging/prod environments mapped to separate ACA apps; secrets pulled from Azure Key Vault at runtime
 
 **Key insight:** OIDC federated identity is enterprise-grade for GitHub → Azure workflows — simpler than service principal management and aligns with platform team security posture.
+
+### 2026-06-17 — Mock API Container App (Phase 1 of MCP Gateway)
+
+**Outcome:** Built complete Mock API infrastructure per Decision 5 (MCP Gateway Architecture).
+
+**Files created:**
+- `mock-api/package.json` — Express.js 4.18 with Node 22 engine requirement
+- `mock-api/server.js` — Express app with 3 REST endpoints:
+  - `GET /api/weather?location=<city>` (randomized mock weather data)
+  - `POST /api/calculate` (validates operation: add/subtract/multiply; validates numeric inputs)
+  - `GET /api/status` (health check with uptime)
+- `mock-api/Dockerfile` — Node 22 Alpine base, npm install --omit=dev, runs as non-root user
+- `mock-api/.dockerignore` — Excludes node_modules, git files
+- `infra/mock-api.bicep` — Container App deployment:
+  - Internal-only ingress (`external: false`)
+  - Minimal resources (0.25 CPU, 0.5Gi memory)
+  - Health probes on `/api/status` (30s initial delay)
+  - Scale 1-3 replicas based on concurrent requests (max 100)
+- `scripts/deploy-simple.sh` — Added Phase 2.5:
+  - `az acr build` for Mock API image (`mock-api:1.0`)
+  - Bicep deployment with internal FQDN output
+  - Summary reports both Kong Gateway and Mock API FQDNs
+
+**Key patterns learned:**
+- **Internal ingress** (`external: false`) ensures Mock API is accessible only from Container App Environment — crucial for internal backend services that should never be internet-facing
+- **30s health probe delay** is sufficient for Node.js Express.js apps (vs. 60s for Kong which has heavier config parsing)
+- **Logging to stdout** for Container Apps simplicity — all `console.log()` output flows to Log Analytics automatically
+- **Lower scaling concurrency threshold** (100 vs. 50 for Kong) because Mock API endpoints are synchronous, low-latency operations
+
+**Follow-up required:**
+- Phase 2: Build MCP Server Container App (wraps Mock API endpoints as MCP tools)
+- Phase 3: Add Kong routes for `/mcp/*` path-based routing to MCP Server
+- Phase 4: Configure SSE-optimized Kong settings (disable buffering, extend timeout)
+
+### 2026-06-17T04:27:00Z — Scribe: Orchestration & Documentation
+**Task:** Archive decisions (33,457 bytes), log Phase 1 Mock API completion.
+
+**Completed:**
+- Archived decisions.md → decisions_archive/2026-06-17T042700Z-decisions.md
+- Reset decisions.md to empty template
+- Wrote orchestration log: 2026-06-17T042700Z-mcmanus.md
+- Wrote session log: 2026-06-17T042700Z-mock-api-phase1.md
+- Appended to McManus history
+
