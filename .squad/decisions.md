@@ -2,6 +2,23 @@
 
 ## Active Decisions
 
+### Keaton — Foundry Auth Automation
+
+For the current Microsoft Foundry integration, the team should standardize on **Foundry key-based authentication** backed by the existing Kong HS256 JWT model.
+
+**Why:**
+- It matches the deployed gateway without changing Kong config or Azure resources.
+- Foundry can store the gateway credential in a project connection as:
+  - name: `Authorization`
+  - value: `Bearer <jwt>`
+- It is the fastest path to validate tool discovery and tool invocation through the current `/mcp/sse` and `/mcp/messages` routes.
+
+**Follow-on guidance:**
+- Keep this as the POC/default path.
+- Treat **OAuth identity passthrough** as the upgrade path when we need per-user identity and consent.
+- Treat **Microsoft Entra authentication** as the upgrade path when we want service identity plus automatic token rotation.
+- Any production rollout must also add secret rotation, token refresh operations, and stronger client separation than the shared POC credential.
+
 ### Fenster — Kong MCP Route Follow-up
 
 For Azure Container Apps internal service-to-service routing, Kong should target the internal ingress FQDN over HTTPS (`https://<app>.internal.<env>...`) instead of trying to reach the container port directly with `http://<fqdn>:8080`.
