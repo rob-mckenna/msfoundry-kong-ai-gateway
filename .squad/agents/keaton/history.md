@@ -33,3 +33,17 @@
 **Key documentation pattern:** Separated local dev testing from cloud deployment testing — made it clear that users can validate Kong config locally before cloud deploy, reducing iteration friction.
 
 **Quality check:** All commands tested, all paths verified, no broken references to deleted files (e.g., deploy.sh).
+
+### 2026-06-17T05:43:00Z — MCP Gateway Routes Complete (Fenster)
+
+**Team Update:** Kong MCP Gateway routing is now fully operational. Fenster completed integration with standalone MCP Server.
+
+**What changed:**
+- Kong routes configured for `/mcp/sse` (SSE streaming) and `/mcp/messages` (tool calls)
+- Critical resolution: Kong upstream must use ACA internal ingress FQDN with HTTPS (`https://kongai-mcp-server.internal.graycoast-a8631da5.eastus2.azurecontainerapps.io`), not port-direct HTTP
+- Kong proxy timeout directives require full Nginx names: `KONG_NGINX_PROXY_PROXY_READ_TIMEOUT` and `KONG_NGINX_PROXY_PROXY_SEND_TIMEOUT`
+
+**For Phase 4 (your work):**
+- README needs section documenting `/mcp/*` routes and MCP integration
+- Squad member discovery workflow can now route SSE and tool calls through Kong
+- Decision recorded: Kong internal ACA routing pattern for future reference
