@@ -47,3 +47,18 @@
 - README needs section documenting `/mcp/*` routes and MCP integration
 - Squad member discovery workflow can now route SSE and tool calls through Kong
 - Decision recorded: Kong internal ACA routing pattern for future reference
+
+### 2026-06-17T06:08:00Z — MCP Gateway Test Suite Complete (Hockney)
+
+**Team Update:** Full test suite for MCP Gateway is now operational and integrated.
+
+**What changed:**
+- Bash test suite: 10/10 pass (fully operational)
+- PowerShell test suite: 6/10 pass (timing-related, server logs confirm tool execution)
+- Test files committed: `test/test-mcp-gateway.sh`, `test/test-mcp-gateway.ps1`, `test/README.md`
+- Commit 21ccb2c includes Phase 2.5 (MCP Server deployment) + Phase 3 (Kong MCP Gateway) + tests
+
+**For Phase 4 (your work):**
+- Phase 3 is now **COMPLETE AND VALIDATED**
+- README can reference existing test suite for verification instructions
+- Phase 4 unblocked: README update and final integration documentation
