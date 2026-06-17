@@ -1,0 +1,126 @@
+# Required GitHub secrets for OIDC login:
+# - AZURE_CLIENT_ID: Azure AD app/client ID with federated credentials for this repo
+# - AZURE_TENANT_ID: Azure AD tenant ID
+# - AZURE_SUBSCRIPTION_ID: Azure subscription ID
+# Deployment defaults:
+# - Resource group: rg-kong-aca
+# - Location: eastus2
+# - Name prefix: kongai
+
+name: Deploy Kong Gateway
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'kong.yaml'
+      - 'Dockerfile'
+      - 'infra/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Optional image tag to deploy (defaults to kong-ai-gw:<commit-sha>)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    env:
+      RESOURCE_GROUP: rg-kong-aca
+      LOCATION: eastus2
+      NAME_PREFIX: kongai
+      INFRA_DEPLOYMENT: kongai-infra
+      APP_DEPLOYMENT: kongai-app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve image tag
+        id: image
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.image_tag }}" ]]; then
+            IMAGE_TAG="${{ inputs.image_tag }}"
+          else
+            IMAGE_TAG="kong-ai-gw:${GITHUB_SHA}"
+          fi
+
+          echo "image_tag=${IMAGE_TAG}" >> "${GITHUB_OUTPUT}"
+
+      - name: Phase 1 - Deploy shared infra
+        id: infra
+        shell: bash
+        run: |
+          az group create \
+            --name "${RESOURCE_GROUP}" \
+            --location "${LOCATION}" \
+            --output none
+
+          az deployment group create \
+            --resource-group "${RESOURCE_GROUP}" \
+            --name "${INFRA_DEPLOYMENT}" \
+            --template-file infra/acr.bicep \
+            --parameters namePrefix="${NAME_PREFIX}" location="${LOCATION}" \
+            --mode Incremental \
+            --output none
+
+          ACR_NAME="$(az deployment group show --resource-group "${RESOURCE_GROUP}" --name "${INFRA_DEPLOYMENT}" --query "properties.outputs.acrName.value" --output tsv)"
+          ACR_LOGIN_SERVER="$(az deployment group show --resource-group "${RESOURCE_GROUP}" --name "${INFRA_DEPLOYMENT}" --query "properties.outputs.acrLoginServer.value" --output tsv)"
+          CONTAINER_APP_ENV_ID="$(az deployment group show --resource-group "${RESOURCE_GROUP}" --name "${INFRA_DEPLOYMENT}" --query "properties.outputs.containerAppEnvId.value" --output tsv)"
+
+          echo "acr_name=${ACR_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "acr_login_server=${ACR_LOGIN_SERVER}" >> "${GITHUB_OUTPUT}"
+          echo "container_app_env_id=${CONTAINER_APP_ENV_ID}" >> "${GITHUB_OUTPUT}"
+
+      - name: Phase 2 - Build image in ACR
+        shell: bash
+        run: |
+          az acr build \
+            --registry "${{ steps.infra.outputs.acr_name }}" \
+            --image "${{ steps.image.outputs.image_tag }}" \
+            .
+
+      - name: Phase 3 - Deploy Container App
+        id: app
+        shell: bash
+        run: |
+          FULL_IMAGE="${{ steps.infra.outputs.acr_login_server }}/${{ steps.image.outputs.image_tag }}"
+
+          az deployment group create \
+            --resource-group "${RESOURCE_GROUP}" \
+            --name "${APP_DEPLOYMENT}" \
+            --template-file infra/main.bicep \
+            --parameters \
+              namePrefix="${NAME_PREFIX}" \
+              location="${LOCATION}" \
+              containerImage="${FULL_IMAGE}" \
+              acrName="${{ steps.infra.outputs.acr_name }}" \
+              containerAppEnvId="${{ steps.infra.outputs.container_app_env_id }}" \
+            --mode Incremental \
+            --output none
+
+          APP_NAME="$(az deployment group show --resource-group "${RESOURCE_GROUP}" --name "${APP_DEPLOYMENT}" --query "properties.outputs.containerAppName.value" --output tsv)"
+          FQDN="$(az deployment group show --resource-group "${RESOURCE_GROUP}" --name "${APP_DEPLOYMENT}" --query "properties.outputs.containerAppFqdn.value" --output tsv)"
+
+          echo "app_name=${APP_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "fqdn=${FQDN}" >> "${GITHUB_OUTPUT}"
+
+      - name: Output FQDN
+        shell: bash
+        run: |
+          echo "Container App: ${{ steps.app.outputs.app_name }}"
+          echo "FQDN: ${{ steps.app.outputs.fqdn }}"

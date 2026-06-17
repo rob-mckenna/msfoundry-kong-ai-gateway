@@ -1,0 +1,206 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.39.26.7824",
+      "templateHash": "3216599870639523996"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]"
+    },
+    "namePrefix": {
+      "type": "string",
+      "defaultValue": "kongai"
+    },
+    "containerImage": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "openAiApiKey": {
+      "type": "securestring",
+      "defaultValue": ""
+    }
+  },
+  "variables": {
+    "acrName": "[toLower(format('{0}acr{1}', parameters('namePrefix'), uniqueString(resourceGroup().id)))]",
+    "logAnalyticsName": "[toLower(format('{0}-law', parameters('namePrefix')))]",
+    "containerAppEnvName": "[toLower(format('{0}-cae', parameters('namePrefix')))]",
+    "containerAppName": "[toLower(format('{0}-gw', parameters('namePrefix')))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2022-10-01",
+      "name": "[variables('logAnalyticsName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "retentionInDays": 30,
+        "features": {
+          "enableLogAccessUsingOnlyResourcePermissions": true
+        }
+      }
+    },
+    {
+      "type": "Microsoft.App/managedEnvironments",
+      "apiVersion": "2024-03-01",
+      "name": "[variables('containerAppEnvName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "appLogsConfiguration": {
+          "destination": "log-analytics",
+          "logAnalyticsConfiguration": {
+            "customerId": "[reference(resourceId('Microsoft.OperationalInsights/workspaces', variables('logAnalyticsName')), '2022-10-01').customerId]",
+            "sharedKey": "[listKeys(resourceId('Microsoft.OperationalInsights/workspaces', variables('logAnalyticsName')), '2022-10-01').primarySharedKey]"
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces', variables('logAnalyticsName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.ContainerRegistry/registries",
+      "apiVersion": "2023-07-01",
+      "name": "[variables('acrName')]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "Basic"
+      },
+      "properties": {
+        "adminUserEnabled": false,
+        "policies": {
+          "quarantinePolicy": {
+            "status": "disabled"
+          },
+          "trustPolicy": {
+            "type": "Notary",
+            "status": "disabled"
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.App/containerApps",
+      "apiVersion": "2024-03-01",
+      "name": "[variables('containerAppName')]",
+      "location": "[parameters('location')]",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppEnvName'))]",
+        "configuration": {
+          "ingress": {
+            "external": true,
+            "targetPort": 8000,
+            "transport": "auto",
+            "traffic": [
+              {
+                "weight": 100,
+                "latestRevision": true
+              }
+            ]
+          },
+          "registries": [
+            {
+              "server": "[reference(resourceId('Microsoft.ContainerRegistry/registries', variables('acrName')), '2023-07-01').loginServer]",
+              "identity": "system"
+            }
+          ],
+          "secrets": "[if(greater(length(parameters('openAiApiKey')), 0), createArray(createObject('name', 'openai-api-key', 'value', parameters('openAiApiKey'))), createArray())]"
+        },
+        "template": {
+          "containers": [
+            {
+              "name": "kong",
+              "image": "[if(greater(length(parameters('containerImage')), 0), parameters('containerImage'), 'kong:3.7')]",
+              "env": "[concat(createArray(createObject('name', 'KONG_DATABASE', 'value', 'off'), createObject('name', 'KONG_DECLARATIVE_CONFIG', 'value', '/etc/kong/kong.yaml'), createObject('name', 'KONG_PROXY_ACCESS_LOG', 'value', '/dev/stdout'), createObject('name', 'KONG_PROXY_ERROR_LOG', 'value', '/dev/stderr'), createObject('name', 'KONG_STATUS_LISTEN', 'value', '0.0.0.0:8100'), createObject('name', 'KONG_ADMIN_LISTEN', 'value', 'off')), if(greater(length(parameters('openAiApiKey')), 0), createArray(createObject('name', 'OPENAI_API_KEY', 'secretRef', 'openai-api-key')), createArray()))]",
+              "probes": [
+                {
+                  "type": "liveness",
+                  "httpGet": {
+                    "path": "/status",
+                    "port": 8100,
+                    "httpHeaders": []
+                  },
+                  "initialDelaySeconds": 30,
+                  "periodSeconds": 10
+                },
+                {
+                  "type": "readiness",
+                  "httpGet": {
+                    "path": "/status",
+                    "port": 8100,
+                    "httpHeaders": []
+                  },
+                  "initialDelaySeconds": 30,
+                  "periodSeconds": 10
+                }
+              ],
+              "resources": {
+                "cpu": "[json('0.5')]",
+                "memory": "1Gi"
+              }
+            }
+          ],
+          "scale": {
+            "minReplicas": 1,
+            "maxReplicas": 5,
+            "rules": [
+              {
+                "name": "http-scaling",
+                "http": {
+                  "metadata": {
+                    "concurrentRequests": "50"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ContainerRegistry/registries', variables('acrName'))]",
+        "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppEnvName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2020-04-01-preview",
+      "scope": "[format('Microsoft.ContainerRegistry/registries/{0}', variables('acrName'))]",
+      "name": "[guid(resourceId('Microsoft.App/containerApps', variables('containerAppName')), 'acrpull')]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
+        "principalId": "[reference(resourceId('Microsoft.App/containerApps', variables('containerAppName')), '2024-03-01', 'full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ContainerRegistry/registries', variables('acrName'))]",
+        "[resourceId('Microsoft.App/containerApps', variables('containerAppName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "containerAppName": {
+      "type": "string",
+      "value": "[variables('containerAppName')]"
+    },
+    "containerAppFqdn": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.App/containerApps', variables('containerAppName')), '2024-03-01').configuration.ingress.fqdn]"
+    },
+    "acrName": {
+      "type": "string",
+      "value": "[variables('acrName')]"
+    },
+    "acrLoginServer": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ContainerRegistry/registries', variables('acrName')), '2023-07-01').loginServer]"
+    }
+  }
+}

@@ -1,0 +1,117 @@
+_format_version: "2.1"
+
+# POC consumer — replace with real credentials before production
+consumers:
+  - username: poc-user
+    jwt_secrets:
+      - key: kong-poc            # Must match the "iss" claim in issued tokens
+        secret: poc-secret-change-me  # HMAC-SHA256 signing secret — POC only, rotate before any real deployment
+        algorithm: HS256
+
+services:
+  - name: chat
+    url: https://msf-demo-01.openai.azure.com/openai/v1/chat/completions  # Azure OpenAI endpoint (OpenAI-compatible /v1 path)
+    plugins:
+      # JWT scoped to the chat service only — does not affect other services added later
+      - name: jwt
+        config:
+          claims_to_verify:
+            - exp
+          uri_param_names:
+            - jwt
+          key_claim_name: iss
+          secret_is_base64: false
+      - name: post-function
+        config:
+          access:
+            - |
+              local http = require("resty.http")
+              local cjson = require("cjson")
+
+              -- Read managed identity env vars from file (written at container startup
+              -- before nginx strips the environment)
+              local function read_mi_env()
+                local f = io.open("/tmp/mi_env", "r")
+                if not f then return nil, nil end
+                local vars = {}
+                for line in f:lines() do
+                  local k, v = line:match("^([%w_]+)=(.+)$")
+                  if k and v then vars[k] = v end
+                end
+                f:close()
+                return vars["IDENTITY_ENDPOINT"], vars["IDENTITY_HEADER"]
+              end
+
+              -- Persist token cache per worker across requests
+              local cache = package.loaded["_mi_token_cache"]
+              if not cache then
+                cache = { access_token = nil, expires_at = 0 }
+                package.loaded["_mi_token_cache"] = cache
+              end
+
+              local now = ngx.time()
+
+              -- Refresh token if missing or expiring within 5 minutes
+              if not cache.access_token or (now + 300) >= cache.expires_at then
+                local identity_endpoint, identity_header = read_mi_env()
+
+                if not identity_endpoint or not identity_header then
+                  kong.log.err("Failed to read managed identity config from /tmp/mi_env")
+                  return kong.response.exit(502, { message = "Identity configuration missing" })
+                end
+
+                local httpc = http.new()
+                local res, err = httpc:request_uri(
+                  identity_endpoint .. "?resource=https://cognitiveservices.azure.com/&api-version=2019-08-01",
+                  {
+                    method  = "GET",
+                    headers = { ["X-IDENTITY-HEADER"] = identity_header }
+                  }
+                )
+
+                if not res then
+                  kong.log.err("Managed identity request failed: " .. tostring(err))
+                  return kong.response.exit(502, { message = "Failed to fetch identity token" })
+                end
+
+                if res.status ~= 200 then
+                  kong.log.err("Managed identity endpoint returned HTTP " .. res.status .. " body: " .. tostring(res.body))
+                  return kong.response.exit(502, { message = "Failed to fetch identity token" })
+                end
+
+                local ok, data = pcall(cjson.decode, res.body)
+                if not ok or not data or not data.access_token then
+                  kong.log.err("Failed to parse managed identity token response")
+                  return kong.response.exit(502, { message = "Failed to fetch identity token" })
+                end
+
+                cache.access_token = data.access_token
+                cache.expires_at   = tonumber(data.expires_on) or (now + 3600)
+              end
+
+              kong.service.request.set_header("Authorization", "Bearer " .. cache.access_token)
+      - name: rate-limiting
+        config:
+          minute: 300
+          policy: local
+      - name: cors
+        config:
+          origins:
+            - "*"
+          methods:
+            - GET
+            - POST
+            - OPTIONS
+          headers:
+            - Authorization
+            - Content-Type
+          exposed_headers:
+            - X-Request-ID
+          credentials: false
+          max_age: 3600
+    routes:
+      - name: chat-route
+        paths:
+          - "/chat"
+        methods:
+          - POST
