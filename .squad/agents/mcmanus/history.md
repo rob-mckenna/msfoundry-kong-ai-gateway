@@ -46,3 +46,18 @@
 
 - **Fix applied:** `infra/main.bicep` liveness and readiness probes — bumped `initialDelaySeconds` from 30 to 60 (lines 136, 146)
 - **Reason:** Kong takes 30–40s to initialize on cold Container Apps replicas; original 30s timeout caused restart loops. Extended to 60s prevents premature failure detection during startup.
+
+### 2026-06-17 — GitHub Actions CI/CD Workflow & Deployment Automation
+
+**Outcome:** Created `.github/workflows/deploy.yml` — comprehensive 3-phase GitHub Actions pipeline.
+
+**Pattern learned:** Federated OIDC identity with Azure — eliminates stored secrets, leverages GitHub's OIDC provider token to mint short-lived Azure credentials at runtime.
+
+**Implementation details:**
+- **Phase 1 (Build & Test):** Unit tests + `az acr build` (cloud-side image build, no local Docker)
+- **Phase 2 (Staging Deploy):** `az containerapp update` to staging environment with health probe verification
+- **Phase 3 (Production Deploy):** Manual approval gate, production deploy with artifact retention (30 days)
+- **Authentication:** `azure/login@v1` with GitHub OIDC token, no stored secrets in GitHub
+- **Environment Variables:** Staging/prod environments mapped to separate ACA apps; secrets pulled from Azure Key Vault at runtime
+
+**Key insight:** OIDC federated identity is enterprise-grade for GitHub → Azure workflows — simpler than service principal management and aligns with platform team security posture.
