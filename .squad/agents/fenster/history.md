@@ -82,3 +82,41 @@ services:
 ```
 
 Both routes should be exposed through Kong's external ingress so client SDKs can reach `/mcp/*` endpoints.
+
+### 2026-06-17T14:31:00Z — OAuth Passthrough Route Design (Keaton)
+
+**Decision adopted:** Parallel auth by separate endpoint families.
+- Existing JWT routes: `/mcp/sse`, `/mcp/messages` (no change)
+- New OAuth routes: `/mcp/oauth/sse`, `/mcp/oauth/messages`
+- Kong OIDC JWT validation with custom Entra audience
+
+**Fenster notes:**
+- Keep existing JWT plugin + routes stable
+- Add new service for OAuth routes: `mcp-oauth-gateway` → same internal MCP Server FQDN
+- OAuth service needs OIDC JWT plugin (validates custom Entra audience)
+- Forward minimal user claims from OIDC token to MCP Server (custom header)
+- No changes to Mock API or MCP Server code required
+
+**Kong route shape for OAuth:**
+```yaml
+services:
+  - name: mcp-oauth-gateway
+    url: https://kongai-mcp-server.internal.graycoast-a8631da5.eastus2.azurecontainerapps.io
+    plugins:
+      - name: openid-connect
+        config:
+          client_id: <entra-client-id>
+          client_secret: <entra-client-secret>
+          audience: <custom-aud>
+          discovery: https://login.microsoftonline.com/{tenant}/.well-known/openid-configuration
+    routes:
+      - name: mcp-oauth-sse
+        methods: [GET]
+        paths: ["/mcp/oauth/sse"]
+      - name: mcp-oauth-messages
+        methods: [POST]
+        paths: ["/mcp/oauth/messages"]
+```
+
+**Next phase:** Implement Kong route config once Entra app registration is complete.
+

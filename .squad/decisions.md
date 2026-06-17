@@ -33,3 +33,42 @@ For Azure Container Apps internal service-to-service routing, Kong should target
 - `KONG_NGINX_PROXY_PROXY_SEND_TIMEOUT=600s`
 
 Using `KONG_NGINX_PROXY_READ_TIMEOUT` / `...SEND_TIMEOUT` renders invalid `read_timeout` / `send_timeout` directives and prevents Kong from starting.
+
+### Keaton — OAuth Passthrough Parallel Auth Design
+
+Adopt **parallel auth by separate MCP endpoint families**.
+
+- Keep the existing JWT/key-based path unchanged:
+  - `GET /mcp/sse`
+  - `POST /mcp/messages`
+- Add a new OAuth passthrough path:
+  - `GET /mcp/oauth/sse`
+  - `POST /mcp/oauth/messages`
+- Validate OAuth tokens at Kong with **OIDC JWT access-token validation** against a **custom Microsoft Entra audience** we control.
+- Forward a minimal set of verified user claims to the MCP Server and optionally the Mock API for audit visibility.
+
+**Rationale:** This is the best demo shape because it preserves the current working JWT flow while making OAuth identity passthrough visible and easy to explain. It also contains risk: the existing JWT routes, tests, and Foundry setup do not need to change.
+
+Separate routes are clearer than header-based branching because each auth model has an explicit endpoint and isolated Kong policy. That makes troubleshooting, rollback, and documentation much simpler.
+
+**Key implementation note:** The current MCP server advertises `/mcp/messages` during the SSE bootstrap flow. To support `/mcp/oauth/messages`, the MCP server needs a small enhancement so the advertised public message path can be configured per route family.
+
+**Trade-offs:**
+
+Advantages:
+- Lowest regression risk to the existing JWT demo
+- Clear side-by-side comparison for Rob
+- Clean Foundry setup with two project connections
+- Route-level rollback without touching the JWT baseline
+
+Costs:
+- Slightly more Kong route/config duplication
+- Requires MCP bootstrap-path awareness for the OAuth route family
+- Preferred Kong plugin (`openid-connect`) requires Enterprise/Konnect capability or a fallback design if the team stays on OSS Kong
+
+**Production readiness considerations:**
+1. Use a **custom Entra audience**, not a Microsoft-owned audience, to avoid the Foundry restriction on passing Microsoft tokens to untrusted custom MCP endpoints.
+2. Prefer **stateless JWT validation via OIDC/JWKS** over introspection for Entra access tokens.
+3. Store client secrets outside the repo and define a rotation owner before rollout.
+4. Keep user-identity enforcement at the gateway first; add downstream authorization only when a tool actually needs it.
+5. Add observability that distinguishes JWT vs OAuth route traffic without logging raw tokens.

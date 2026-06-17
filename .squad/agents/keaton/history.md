@@ -8,6 +8,13 @@
 
 ## Learnings
 
+### 2026-06-17T08:33:31-04:00 — Foundry Auth Automation
+
+- Mapped the current Kong MCP Gateway JWT pattern directly to **Foundry key-based authentication**: `Authorization: Bearer <jwt>` stored in the Foundry project connection.
+- Added operator docs: `docs/foundry-auth-analysis.md` for option analysis and `docs/foundry-setup-guide.md` for Foundry portal setup, validation, and troubleshooting.
+- Added reusable JWT generators at `scripts/generate-foundry-jwt.sh` and `scripts/generate-foundry-jwt.ps1`, both using PyJWT with env var overrides for issuer, secret, TTL, and optional subject.
+- Recommendation for this phase: keep shared key-based auth for POC validation, and treat OAuth passthrough / Entra auth as production enhancements depending on whether user identity or secretless workload identity is needed.
+
 ### 2026-06-17T07:03:00Z — Phase 4 Foundry Documentation
 
 - Added Phase 4 documentation to `README.md` plus two detailed guides: `docs/foundry-integration.md` and `docs/architecture.md`.
@@ -69,3 +76,12 @@
 - Phase 3 is now **COMPLETE AND VALIDATED**
 - README can reference existing test suite for verification instructions
 - Phase 4 unblocked: README update and final integration documentation
+
+### 2026-06-17T14:32:13-04:00 — OAuth Passthrough Parallel Auth Design
+
+- Designed the OAuth identity passthrough plan to run **in parallel** with the current key-based JWT MCP flow rather than replacing it.
+- Recommended preserving the current JWT endpoints as the baseline demo and adding a second OAuth route family (`/mcp/oauth/sse` + `/mcp/oauth/messages`) for side-by-side validation.
+- Chose **custom Microsoft Entra OAuth** with a **custom audience** because Foundry will not pass Microsoft-scoped managed OAuth tokens to an untrusted custom MCP endpoint.
+- Recommended **OIDC JWT validation** at Kong for the OAuth route, while noting the current `kong:3.7` OSS image does not include Kong's Enterprise `openid-connect` plugin.
+- Captured the key implementation dependency that the MCP server currently advertises `/mcp/messages`, so the server needs a small public-path configuration enhancement to support a second OAuth message endpoint cleanly.
+- Added four operator docs under `docs/` plus the design decision in `.squad/decisions/inbox/keaton-oauth-passthrough-design.md`.

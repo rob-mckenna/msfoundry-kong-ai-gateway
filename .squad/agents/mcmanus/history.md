@@ -105,3 +105,18 @@
 - Wrote session log: 2026-06-17T042700Z-mock-api-phase1.md
 - Appended to McManus history
 
+### 2026-06-17T14:31:00Z — OAuth Passthrough Infrastructure Planning (Keaton)
+
+**Decision adopted:** Parallel auth by separate endpoint families.
+- Existing JWT routes: `/mcp/sse`, `/mcp/messages` (no change)
+- New OAuth routes: `/mcp/oauth/sse`, `/mcp/oauth/messages`
+- Kong OIDC JWT validation with custom Entra audience
+
+**McManus notes:**
+- No ACA infrastructure changes required beyond current ACA env setup
+- OAuth validation happens at Kong gateway layer, not MCP Server
+- Separate routes keep JWT baseline stable — route-level rollback without touching existing Kong
+- MCP Server needs bootstrap-path awareness for advertising correct message endpoint per route
+
+**Infrastructure concern:** Requires Kong to handle both route families; OIDC JWT plugin must be at service or route level for OAuth routes.
+
