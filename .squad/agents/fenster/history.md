@@ -17,6 +17,12 @@
 
 ## Learnings
 
+### 2026-06-17 — MCP Server SSE Transport Shape
+
+Built the Phase 2 MCP server as a standalone Node 22 + Express app under `mcp-server/`, using `@modelcontextprotocol/sdk`'s legacy `SSEServerTransport` to satisfy the approved `/mcp/sse` transport requirement. Important protocol detail: the SDK-managed SSE bootstrap endpoint is only half of the transport — clients also need a companion POST endpoint (`/mcp/messages?sessionId=...`) because the initial SSE stream sends an `endpoint` event telling the client where to send JSON-RPC messages.
+
+The server defaults `MOCK_API_URL` to `https://kongai-mock-api.internal.graycoast-a8631da5.eastus2.azurecontainerapps.io`, exposes `/health` on port 8080, and maps `get_weather` and `calculate` tool calls straight through to the Mock API with MCP-formatted success/error results. During local validation, a real SDK client successfully connected over SSE, listed both tools, and executed weather + calculation calls against the mock API.
+
 ### 2026-06-16 — Switched upstream to Azure OpenAI endpoint
 
 Updated `kong.yaml` service URL from `https://api.openai.com/v1/chat/completions` to `https://msf-demo-01.openai.azure.com/openai/v1/chat/completions`. Azure OpenAI's `/openai/v1` path is OpenAI-compatible, so no route or schema changes were needed. Also swapped the request-transformer auth header from `Authorization: Bearer ${OPENAI_API_KEY}` to `api-key: ${OPENAI_API_KEY}` — Azure OpenAI uses the `api-key` header for authentication rather than a Bearer token.
@@ -54,3 +60,25 @@ Two root causes for "No credentials found for given 'iss'":
 - `post-function` = -1000 (latest)
 
 Plugin execution order is critical for request flow control — pre-function runs too early in the chain and corrupts headers needed by later plugins. Always validate the order of operations when debugging multi-plugin flows.
+
+### 2026-06-17 — MCP Server Infrastructure Deployed (Phase 2)
+
+MCP Server Container App successfully deployed by McManus. **Internal FQDN:** `kongai-mcp-server.internal.graycoast-a8631da5.eastus2.azurecontainerapps.io`
+
+**Phase 3 Task (Kong routing):** Must add routes for `/mcp/sse` and `/mcp/messages` that proxy to the internal MCP Server FQDN. Both endpoints are required — the SSE stream bootstraps the session, and the POST endpoint carries JSON-RPC messages.
+
+**Route shape for Kong:**
+```yaml
+services:
+  - name: mcp-gateway
+    url: http://kongai-mcp-server.internal.graycoast-a8631da5.eastus2.azurecontainerapps.io
+    routes:
+      - name: mcp-sse
+        methods: [GET]
+        paths: ["/mcp/sse"]
+      - name: mcp-messages
+        methods: [POST]
+        paths: ["/mcp/messages"]
+```
+
+Both routes should be exposed through Kong's external ingress so client SDKs can reach `/mcp/*` endpoints.
