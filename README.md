@@ -152,6 +152,8 @@ If your Azure OpenAI deployment name differs from `gpt-4.1`, replace the `model`
 ├── infra/
 │   ├── acr.bicep               # Phase 1 infra: ACR, Log Analytics, Container App Environment
 │   └── main.bicep              # Container App deploy: probes, ACR auth, runtime env
+├── mock-api/                   # Internal mock REST API used by the MCP server
+├── mcp-server/                 # MCP-over-SSE server that wraps mock-api endpoints as tools
 ├── scripts/
 │   └── deploy-simple.sh        # 3-phase manual deployment script
 └── .github/
