@@ -8,6 +8,13 @@
 
 ## Learnings
 
+### 2026-06-17T07:03:00Z — Phase 4 Foundry Documentation
+
+- Added Phase 4 documentation to `README.md` plus two detailed guides: `docs/foundry-integration.md` and `docs/architecture.md`.
+- Documented the validated Foundry integration shape as **generic MCP client guidance** rather than UI-specific steps, because Foundry surface details were not provided.
+- Captured the critical protocol requirement that clients must open `GET /mcp/sse`, preserve the returned `sessionId`, and send authenticated JSON-RPC messages to `POST /mcp/messages?sessionId=...`.
+- Updated `test/README.md` with Foundry-specific validation scenarios so the existing 10/10 gateway suite can be reused as the pre-Foundry baseline.
+
 ### 2026-06-16T18:32:09-04:00 — ACA Deployment Readiness Review
 
 - Reviewed all five input artifacts (Dockerfile, kong.yaml, main.bicep, deploy.sh, deploy-simple.sh, README).
