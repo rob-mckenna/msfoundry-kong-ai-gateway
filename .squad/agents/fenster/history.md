@@ -120,3 +120,8 @@ services:
 
 **Next phase:** Implement Kong route config once Entra app registration is complete.
 
+### 2026-06-18T19:14:07Z — Phase 3 OAuth Route Execution Gate
+
+For the Konnect-backed OAuth route step, the operational gate is now explicit: do not create `/mcp/oauth/sse` and `/mcp/oauth/messages` until Rob has the Microsoft Entra **tenant ID** and the **resource API app registration client ID** ready. If those values are not available yet, keep the current JWT family (`/mcp/sse`, `/mcp/messages`) as the working demo baseline and carry OAuth route creation as **pending Entra setup**.
+
+The repo already contains the automation/docs for the eventual Konnect change (`scripts/konnect-add-oauth-routes.*`, Entra registration guide, Konnect checklist). The remaining blocker is identity setup, not Kong route design.

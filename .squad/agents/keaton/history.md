@@ -8,6 +8,20 @@
 
 ## Learnings
 
+### 2026-06-18T10:52:45-04:00 — Konnect Automation Hand-off
+
+- Added `docs/kong-konnect-automation.md` to separate **automatable** Konnect work (control plane creation, cert registration, Key Vault upload, config sync, OAuth route creation, ACA deploy) from the still-manual portal/browser steps.
+- Added paired Bash and PowerShell scripts for the full Konnect flow: `konnect-setup`, `konnect-sync-config`, `konnect-add-oauth-routes`, and `deploy-konnect-dataplane`.
+- Added `Dockerfile.konnect` and `infra/main-konnect.bicep` so the dataplane deploy path is explicit instead of patching the current OSS DB-less deployment files in place.
+- The safest operator sequence is: **setup control plane -> deploy dataplane -> sync JWT config -> run JWT regression suite -> add OAuth routes -> do manual OAuth/browser validation**.
+
+### 2026-06-18T09:42:53-04:00 — Konnect Migration Documentation
+
+- Documented the recommended migration path from the current **Kong OSS DB-less ACA deployment** to **Konnect control plane + self-managed ACA data plane** in `docs/kong-konnect-setup.md` and `docs/kong-konnect-quickstart.md`.
+- Captured the field-by-field translation from the current `kong.yaml` into Konnect services, routes, plugins, and JWT consumer credentials in `docs/kong-yaml-to-konnect.md` so the team can preserve the current `/mcp/*` JWT flow during cutover.
+- Updated `docs/oauth-implementation-phases.md` to add **Phase 0** for Konnect foundation work and to treat OAuth rollout as a Konnect-managed route/plugin change rather than a new declarative `kong.yaml` deployment.
+- Recommendation: use **Azure Key Vault + managed identity** for Konnect cluster cert/key injection, keep the current JWT route family intact, and add `/mcp/oauth/*` as a parallel route family managed in Konnect.
+
 ### 2026-06-17T08:33:31-04:00 — Foundry Auth Automation
 
 - Mapped the current Kong MCP Gateway JWT pattern directly to **Foundry key-based authentication**: `Authorization: Bearer <jwt>` stored in the Foundry project connection.
@@ -85,3 +99,10 @@
 - Recommended **OIDC JWT validation** at Kong for the OAuth route, while noting the current `kong:3.7` OSS image does not include Kong's Enterprise `openid-connect` plugin.
 - Captured the key implementation dependency that the MCP server currently advertises `/mcp/messages`, so the server needs a small public-path configuration enhancement to support a second OAuth message endpoint cleanly.
 - Added four operator docs under `docs/` plus the design decision in `.squad/decisions/inbox/keaton-oauth-passthrough-design.md`.
+
+### 2026-06-18T14:48:55-04:00 — Squad Execution Capability Assessment
+
+- Assessed the real execution boundary for the Konnect automation: Squad can run the end-to-end machine steps after Rob supplies a Konnect account, a PAT, and the target Key Vault / Entra inputs.
+- Verified Rob's environment already has the required runtime tools for execution (`bash`, `az`, `curl`, `python`, `openssl`) and Azure CLI is authenticated, but `kongctl` is not yet installed.
+- Confirmed the current Windows CLI install path should use the **`kongctl`** release assets (`kongctl_windows_amd64.zip`) from `Kong/kongctl`; the older `konnect-cli-windows-amd64.zip` URL is not the current artifact.
+- Re-ran `bash test/test-mcp-gateway.sh` from this environment and confirmed the validation phase is agent-runnable today (**10/10 pass**).
