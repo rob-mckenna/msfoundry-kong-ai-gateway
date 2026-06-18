@@ -8,6 +8,13 @@
 
 ## Learnings
 
+### 2026-06-18T18:53:23-04:00 — POC Completion Assessment
+
+- The platform-side work is effectively complete: Kong on ACA, Konnect migration, Azure OpenAI proxying, MCP gateway routing, Entra registrations, and the parallel JWT + OAuth route families are all documented and in place.
+- The main remaining work is **Foundry-side manual configuration**: creating the JWT and OAuth MCP connections, attaching them to the target agent/project, and capturing the working connection IDs and demo evidence.
+- The JWT path is already the safest demo baseline because `bash test/test-mcp-gateway.sh` still passes `10/10`; the OAuth route family is configured, but its real user-consent success path still needs live validation from Foundry.
+- `docs/foundry-setup-guide.md` only covered the JWT path, so the repo needed a final operator guide (`docs/foundry-final-configuration.md`) plus a status checkpoint (`docs/poc-completion-status.md`) to show what is done versus what is still manual.
+
 ### 2026-06-18T10:52:45-04:00 — Konnect Automation Hand-off
 
 - Added `docs/kong-konnect-automation.md` to separate **automatable** Konnect work (control plane creation, cert registration, Key Vault upload, config sync, OAuth route creation, ACA deploy) from the still-manual portal/browser steps.
