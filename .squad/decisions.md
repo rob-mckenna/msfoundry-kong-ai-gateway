@@ -72,3 +72,31 @@ Costs:
 3. Store client secrets outside the repo and define a rotation owner before rollout.
 4. Keep user-identity enforcement at the gateway first; add downstream authorization only when a tool actually needs it.
 5. Add observability that distinguishes JWT vs OAuth route traffic without logging raw tokens.
+
+### Keaton — Konnect as the OAuth Enablement Path for ACA Gateway
+
+Use **Kong Konnect with a self-managed ACA data plane** as the preferred path for adding OAuth passthrough.
+
+**Implementation shape:**
+1. Keep the current ACA-hosted Kong container as the runtime data plane.
+2. Move configuration ownership from local `kong.yaml` to a Konnect control plane.
+3. Store Konnect cluster certificate material in **Azure Key Vault** and inject it into ACA with the app's system-assigned managed identity.
+4. Preserve the current JWT route family: `GET /mcp/sse`, `POST /mcp/messages`
+5. Add a second OAuth route family in Konnect: `GET /mcp/oauth/sse`, `POST /mcp/oauth/messages`
+6. Attach `openid-connect` only to the OAuth route family.
+
+**Why:** It unlocks the supported Kong `openid-connect` capability without introducing a second gateway product. It preserves the working JWT demo during cutover. It keeps rollback simple and aligns with the current ACA + Key Vault + managed identity operating model.
+
+**Benefits:**
+- Clean parallel-auth demo
+- Better separation of control plane and runtime concerns
+- Portal/API-driven changes instead of image rebuilds for every route tweak
+- Future export/backup of gateway config from Konnect
+
+**Costs:**
+- The runtime no longer uses `kong.yaml` as the source of truth
+- ACA deployment needs new Konnect env vars and Key Vault secret refs
+- Team must manage Konnect control plane objects and cert rotation procedures
+- `/mcp/oauth/messages` still depends on the MCP server advertising the correct public path
+
+**Follow-up work:** Update docs and runbooks for Konnect cutover. Implement Dockerfile and Bicep changes in a later task. Add MCP server public message path configurability if not already present.
