@@ -127,3 +127,29 @@ Implement the Konnect migration automation as a **four-script operator flow** wi
 - Browser-based OAuth consent / sign-in validation
 
 **Follow-up:** If Rob wants fully non-interactive Entra setup later, add Azure CLI automation for app registration, scopes, and client exposure as a separate task.
+
+### Keaton — Squad Execution Capability for Konnect Setup
+
+Treat the Konnect migration as **Squad-executable after Rob provides the manual prerequisites**.
+
+**What Squad can execute now:**
+1. Local `kongctl` download/extract on Windows
+2. Konnect control-plane setup and certificate registration
+3. Azure Key Vault certificate upload
+4. Konnect-backed ACA data-plane build and deployment
+5. Config sync from `kong.yaml` into Konnect
+6. OAuth route creation and `openid-connect` attachment
+7. Post-change validation with the existing MCP gateway test suite
+
+**Manual boundaries that remain:**
+1. Konnect account creation
+2. Konnect PAT generation
+3. Browser-based OAuth sign-in / consent validation
+4. Entra app-registration decisions when redirect URIs, scopes, or consent ownership need a human decision
+
+**Important caveats:**
+- The current `konnect-setup` automation includes a confirmation prompt before creating a brand-new control plane, so fully unattended execution requires a pre-supplied confirmation or a pre-existing control plane.
+- The current Windows CLI artifact is `kongctl_windows_amd64.zip`, not the older `konnect-cli-windows-amd64.zip` name.
+- Secrets must stay in environment variables or Key Vault only; do not place PATs or client secrets in repo files or chat.
+
+**Rationale:** This is the right operating model for Rob because it removes the repetitive technical execution from him while preserving the unavoidable human-owned identity and consent steps. It also keeps rollback simple: Squad can stop after each checkpoint, preserve the current JWT baseline, and only introduce OAuth after the Konnect dataplane and regression suite are healthy.
