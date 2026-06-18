@@ -100,3 +100,30 @@ Use **Kong Konnect with a self-managed ACA data plane** as the preferred path fo
 - `/mcp/oauth/messages` still depends on the MCP server advertising the correct public path
 
 **Follow-up work:** Update docs and runbooks for Konnect cutover. Implement Dockerfile and Bicep changes in a later task. Add MCP server public message path configurability if not already present.
+
+### Keaton — Konnect Automation Implementation Shape
+
+Implement the Konnect migration automation as a **four-script operator flow** with shared Bash and PowerShell coverage:
+
+1. `konnect-setup` — control plane creation, client certificate provisioning, Key Vault upload
+2. `deploy-konnect-dataplane` — build and deploy the ACA data plane revision
+3. `konnect-sync-config` — sync the existing JWT gateway config into Konnect
+4. `konnect-add-oauth-routes` — add the OAuth route family and `openid-connect`
+
+**Why:**
+- It mirrors the natural cutover checkpoints and keeps rollback simple.
+- It avoids mixing Konnect platform setup, Azure deployment changes, and OAuth config in one opaque script.
+- It preserves the current JWT baseline until the Konnect dataplane is healthy and regression-tested.
+
+**Implementation notes:**
+- Use the current Konnect CLI binary name, `kongctl`, for PAT validation.
+- Use Konnect APIs for control plane, certificate, route, and plugin operations.
+- Use `kongctl sync` for gateway entity migration so the current `kong.yaml` remains the starting point.
+- Use `Dockerfile.konnect` and `infra/main-konnect.bicep` rather than mutating the current OSS DB-less deployment files in place.
+
+**Manual boundaries:**
+- Konnect account creation
+- PAT generation
+- Browser-based OAuth consent / sign-in validation
+
+**Follow-up:** If Rob wants fully non-interactive Entra setup later, add Azure CLI automation for app registration, scopes, and client exposure as a separate task.
