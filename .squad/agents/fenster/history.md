@@ -125,3 +125,229 @@ services:
 For the Konnect-backed OAuth route step, the operational gate is now explicit: do not create `/mcp/oauth/sse` and `/mcp/oauth/messages` until Rob has the Microsoft Entra **tenant ID** and the **resource API app registration client ID** ready. If those values are not available yet, keep the current JWT family (`/mcp/sse`, `/mcp/messages`) as the working demo baseline and carry OAuth route creation as **pending Entra setup**.
 
 The repo already contains the automation/docs for the eventual Konnect change (`scripts/konnect-add-oauth-routes.*`, Entra registration guide, Konnect checklist). The remaining blocker is identity setup, not Kong route design.
+
+### 2026-06-19T15:17:12Z — OIDC Audience Format Mismatch Fix
+
+**Symptom:** Kong rejecting OAuth tokens from Foundry with:
+`[openid-connect] required audience were not found [ d50b1d91-8be2-48cd-9615-3fbba4e04a2b ]`
+
+**Root cause (two compounding bugs):**
+
+1. **Wrong audience format in Kong config.** The `openid-connect` plugin on the OAuth routes was configured with `audience_required = ["d50b1d91-8be2-48cd-9615-3fbba4e04a2b"]` (bare GUID). Microsoft Entra issues access tokens for custom API registrations with `aud = "api://d50b1d91-8be2-48cd-9615-3fbba4e04a2b"` — the `api://` URI prefix is mandatory when the resource app uses a custom App ID URI. Kong couldn't find the bare GUID in the token's `aud` claim and rejected every request.
+
+2. **Script bug — client ID conflated with resource app ID.** `konnect-add-oauth-routes.ps1` only took one `$EntraClientId` parameter and used it for both `client_id` (the OAuth client) and `audience_required` (should be the resource API app). These are different app registrations. The script was constructing `audience_required = ["api://<client-id>"]` which is also wrong.
+
+**Fixes applied:**
+
+- Created `scripts/fix-oidc-audience.ps1` — targeted update script that finds both OIDC plugins (`mcp-oauth-sse`, `mcp-oauth-messages`) and sets `audience_required = ["api://d50b1d91-8be2-48cd-9615-3fbba4e04a2b", "d50b1d91-8be2-48cd-9615-3fbba4e04a2b"]`. The OR semantics mean Kong accepts the token if it contains either format.
+- Updated `konnect-add-oauth-routes.ps1`: added separate `$EntraResourceAppId` parameter; `audience_required` now uses `["api://$EntraResourceAppId", $EntraResourceAppId]` correctly.
+
+**⚠️ Konnect v2 API: no PATCH on plugin entities.** First run of `fix-oidc-audience.ps1` failed with `405 Method Not Allowed` because the Konnect v2 `core-entities/plugins/{id}` endpoint does not support PATCH — only PUT (full replace). Fix: GET the full plugin object, modify `audience_required` in-place on the PSObject, build a PUT body with all non-read-only fields (name, enabled, config, protocols, route, service, consumer, tags), then PUT. Both `fix-oidc-audience.ps1` and the update-branch in `konnect-add-oauth-routes.ps1` were corrected.
+
+**Konnect v2 plugin update pattern (canonical):**
+```powershell
+$full = Invoke-RestMethod GET .../plugins/{id}
+$full.config.some_field = $newValue
+$putBody = @{ name=$full.name; enabled=$full.enabled; config=$full.config; protocols=$full.protocols }
+if ($full.route)   { $putBody.route   = @{ id=$full.route.id } }
+Invoke-RestMethod PUT .../plugins/{id} -Body ($putBody | ConvertTo-Json -Depth 10)
+```
+
+**Key pattern — Entra audience format rules:**
+- Resources registered with a custom App ID URI (`api://<guid>`) always get `aud = "api://<guid>"` in the access token, not the bare GUID.
+- Resources registered WITHOUT a custom URI (default) get `aud = "<guid>"`.
+- Kong `audience_required` uses OR semantics: the token must contain at least one of the listed values.
+- Safe pattern: always include BOTH `api://<guid>` AND `<guid>` in `audience_required` so the config survives regardless of how the Entra app was registered.
+
+**To apply the fix (Rob runs this with PAT set):**
+```powershell
+$env:KONNECT_PAT = '<your-pat>'
+.\scripts\fix-oidc-audience.ps1
+```
+
+**Key file paths:**
+- `entra-oauth-config.json` — canonical source for all Entra app IDs and endpoints
+  - `resource_api_app_id`: `d50b1d91-8be2-48cd-9615-3fbba4e04a2b`
+  - `client_app_id`: `2bf65392-7f5e-44e3-845b-493831902b40`
+- `scripts/fix-oidc-audience.ps1` — targeted live fix for existing Konnect OIDC plugins
+- `scripts/konnect-add-oauth-routes.ps1` — corrected to separate client ID from resource app ID
+
+### 2026-06-19T15:41:12Z — OIDC Issuer Missing Fix
+
+**Symptom:** Kong rejecting OAuth tokens after the audience fix with:
+`"No credentials found for given 'iss'"`
+
+**Root cause:** The `issuer` field on the `openid-connect` plugins was either absent or set to a blank/wrong value. Without a valid issuer URL, Kong cannot auto-discover the JWKS endpoint (`{issuer}/.well-known/openid-configuration`) and therefore cannot fetch the Entra public keys needed to verify token signatures. Token signature validation fails before audience checking even runs.
+
+**Why this can happen:** `konnect-add-oauth-routes.ps1` sets the issuer at plugin creation time from the `$EntraTenantId` parameter. If the script was run without that parameter, or if only a targeted audience patch was applied later (without touching `issuer`), the field ends up missing in the live config.
+
+**Correct issuer value:**
+```
+https://login.microsoftonline.com/e500988a-f788-4f81-b1ba-e3ad7cd66171/v2.0
+```
+Source: `entra-oauth-config.json` → `issuer` field. Tenant ID: `e500988a-f788-4f81-b1ba-e3ad7cd66171`.
+
+**Fix:** Created `scripts/fix-oidc-issuer.ps1` — follows the same GET-modify-PUT pattern as `fix-oidc-audience.ps1`. It finds the OIDC plugins on both `mcp-oauth-sse` and `mcp-oauth-messages` routes and sets `config.issuer` to the correct v2.0 Entra endpoint. Supports `-WhatIf`.
+
+**To apply (Rob runs this with PAT set):**
+```powershell
+$env:KONNECT_PAT = '<your-pat>'
+.\scripts\fix-oidc-issuer.ps1
+```
+
+**How Kong uses the issuer:**
+1. On plugin startup/first request, Kong GETs `{issuer}/.well-known/openid-configuration`
+2. From that doc it extracts `jwks_uri`
+3. It fetches the public key set from `jwks_uri` and caches it
+4. All incoming tokens are signature-verified against those cached keys
+5. Without a valid `issuer`, step 1 never runs → no keys → every token rejected
+
+**Error progression (expected validation sequence):**
+1. ✅ Token format and signature (requires `issuer` / JWKS) — was broken
+2. ✅ Audience check (`audience_required`) — fixed in previous session
+3. ✅ Scope check (if configured)
+
+**Files added:**
+- `scripts/fix-oidc-issuer.ps1`
+
+### 2026-06-19T15:50:25Z — OIDC Cascading Config Issues: Audience Reversion + Scopes Block
+
+**Root cause analysis from Kong container logs:**
+
+After the issuer fix ran, the error was STILL "No credentials found for given 'iss'" despite the issuer being set correctly. ACA log analysis revealed a three-stage problem playing out in the logs:
+
+**Stage 1 (17:38 UTC):** Foundry (`AzureAIFoundryAgentRuntime/1845191`) got:
+`"scopes required but no scopes found"` → 403
+This means audience check PASSED (plugin had `audience_required = ["api://...", "..."]` at that point) but `scopes_required` was non-empty and the Foundry access token had no matching scopes.
+
+**Stage 2 (18:59-19:12 UTC):** Foundry got:
+`"required audience were not found [ d50b1d91... ]"` → 403
+Between 17:38 and 18:59 something (possibly `fix-oidc-issuer.ps1`) PUT the plugin back with `audience_required = ["d50b1d91..."]` (bare GUID only). Foundry's token uses `aud = "api://d50b1d91..."` so the bare GUID format doesn't match.
+
+**Critical finding — Foundry token audience format:**
+- **client_credentials flow** → `aud = "d50b1d91..."` (bare GUID)
+- **Foundry user-delegated flow (what Foundry uses)** → `aud = "api://d50b1d91..."` (App ID URI)
+
+This was confirmed by decoding a live `client_credentials` token (bare GUID) vs observing Foundry behaviour (required api:// format).
+
+**Why each partial fix kept breaking the other:**
+`fix-oidc-audience.ps1` GETs the plugin, changes `audience_required`, PUTs back. But if run when `issuer` is wrong, it preserves the broken issuer. `fix-oidc-issuer.ps1` GETs the plugin, changes `issuer`, PUTs back. But if run when `audience_required` has reverted to bare GUID (before audience fix took hold on the data plane), it preserves the wrong audience. Each script is independently correct, but they're not idempotent against each other when run in the wrong window.
+
+**Fix: atomic full-config update (`fix-oidc-full.ps1`):**
+Sets all three broken fields in a single GET-modify-PUT:
+1. `issuer = "https://login.microsoftonline.com/e500988a.../v2.0"` ← key discovery
+2. `audience_required = ["api://d50b1d91...", "d50b1d91..."]` ← both audience formats
+3. `scopes_required = []` ← disabled; Foundry access tokens don't carry the scopes Kong expected
+
+**To apply:**
+```powershell
+$env:KONNECT_PAT = '<your-pat>'
+.\scripts\fix-oidc-full.ps1
+```
+
+**Kong OIDC validation error progression (complete map):**
+| Error message | Cause | Which config field |
+|---|---|---|
+| `"No credentials found for given 'iss'"` | Token `iss` claim ≠ any known issuer URL | `issuer` missing/wrong |
+| `"required audience were not found [X]"` | Token `aud` claim ≠ any value in `audience_required` | `audience_required` missing format |
+| `"scopes required but no scopes found"` | Token scopes ≠ `scopes_required` values | `scopes_required` non-empty when it shouldn't be |
+| `"invalid bearer token"` | Token failed signature verification or is malformed | Keys/format |
+| `"no suitable authorization credentials were provided"` | No Authorization header / empty token | Client not sending token |
+
+**Key rule: always fix all three fields atomically.** Fixing one at a time while doing GET-modify-PUT can preserve the broken state of the others depending on which sequence the Konnect data plane push and script execution happen in.
+
+**Files added:**
+- `scripts/fix-oidc-full.ps1` — replaces individual fix scripts going forward
+
+### 2026-06-19T16:03:05Z — "No credentials found for given 'iss'" was the JWT plugin, not OIDC
+
+**Breakthrough from ACA log analysis:**
+
+The `fix-oidc-full.ps1` script **DID work**. Starting at 19:31 UTC, `GET /mcp/oauth/sse` returned 200 for every Foundry request. The OIDC plugin was no longer blocking.
+
+BUT: The error Rob was seeing continued, because the same message "No credentials found for given 'iss'" was now coming from a **different plugin** — the **JWT plugin on `/mcp/messages`**.
+
+**The actual failing flow:**
+1. Foundry → `GET /mcp/oauth/sse` → **200** ✅ (OIDC passes, SSE established)
+2. MCP server sends SSE endpoint event: `data: /mcp/messages?sessionId=XXX`
+3. Foundry → `POST /mcp/messages?sessionId=XXX` → **401** ❌ 
+4. Kong JWT plugin tries to find a consumer by `iss = "https://login.microsoftonline.com/..."` → no match → `"No credentials found for given 'iss'"` (JWT plugin error, not OIDC!)
+
+**Root cause:** The MCP server ignores the `x-external-mcp-messages-path: /mcp/oauth/messages` header set by the pre-function and always advertises `/mcp/messages` in its SSE endpoint event. The `/mcp/messages` route requires JWT auth, not OAuth. Foundry's Entra token fails the JWT consumer lookup.
+
+**Fix: Kong body_filter post-function to rewrite the SSE stream**
+
+Added `post-function` plugin (body_filter phase) to the `mcp-oauth-sse` route that intercepts each SSE stream chunk and rewrites:
+```
+data: /mcp/messages?   →   data: /mcp/oauth/messages?
+```
+
+This is transparent to both the MCP server (sends unchanged) and Foundry (receives corrected URL). No MCP server code changes required.
+
+Also added POST to the `mcp-oauth-sse` route methods — Foundry's AzureAIFoundryAgentRuntime tries `POST /mcp/oauth/sse` as a "streamable HTTP transport" probe; currently gets 404 which causes retry loops.
+
+**Key lesson: "No credentials found for given 'iss'" is NOT exclusive to the OIDC plugin.** The Kong JWT plugin produces the exact same message when it can't find a consumer credential matching the token's `iss` claim. When this error persists after OIDC config is correct, check whether the request is being routed to a JWT-protected endpoint.
+
+**Kong log line to distinguish the two:**
+- OIDC: `[lua] responses.lua:30: [openid-connect] no credentials found for given 'iss'`
+- JWT: `[lua] jwt.lua:... [kong] ... No credentials found for given 'iss'`
+
+**Second finding — Foundry uses streamable HTTP transport probe:**
+`AzureAIFoundryAgentRuntime` always tries `POST /mcp/oauth/sse` first. If 404, it falls back to SSE (`GET /mcp/oauth/sse`). The POST probe is checking for the newer "MCP Streamable HTTP" transport. Adding POST to the route's methods prevents the 404 but the MCP server would need to handle it for full streamable HTTP support.
+
+**Script to run:**
+```powershell
+$env:KONNECT_PAT = '<your-pat>'
+.\scripts\fix-mcp-oauth-endpoint.ps1
+```
+
+**Files added:**
+- `scripts/fix-mcp-oauth-endpoint.ps1` — adds body_filter SSE rewrite + POST method to mcp-oauth-sse
+
+**Remaining known gap:** MCP server does not implement `x-external-mcp-messages-path` header. This should be added to the MCP server code so the Kong body_filter workaround is not needed long-term (McManus to implement).
+
+### 2026-06-19T18:07:27Z — Phase 1 Key-Auth Migration Executed
+
+**Decision:** Rob approved replacing JWT auth with `key-auth` plugin on the MCP routes. Implemented Phase 1: parallel key-auth route family alongside existing JWT routes.
+
+**What was provisioned in Konnect (control plane: 1933cbf7-093d-4e84-a6d7-8e553c34c9a7):**
+- Consumer: `foundry-mcp-client` (consumer ID: `43222d18-16b5-482a-b7c8-b0ad13e06c8a`)
+- Key-auth credential: 64-char hex key stored in `api-key-config.json` (gitignored)
+- Service: `mcp-key-service` → same MCP server URL as `mcp-service`
+  - Plugin: `key-auth` (service-level, `X-API-Key` header, `hide_credentials: true`)
+  - Plugin: `cors` (service-level, same config as mcp-service)
+- Route: `mcp-key-sse` → `GET/POST/OPTIONS /mcp/key/sse`
+  - Plugin: `request-transformer` (`replace.uri = /mcp/sse`) — strips `/key` prefix upstream
+  - Plugin: `post-function` (body_filter) — rewrites SSE `data: /mcp/messages?` → `data: /mcp/key/messages?`
+- Route: `mcp-key-messages` → `POST/OPTIONS /mcp/key/messages`
+  - Plugin: `request-transformer` (`replace.uri = /mcp/messages`) — strips `/key` prefix upstream
+
+**CRITICAL LEARNING — Service isolation required for parallel auth:**
+Adding key-auth routes directly to `mcp-service` (as initially attempted) fails because `mcp-service` has a service-level JWT plugin (priority 1005 > key-auth priority 1003). Kong runs JWT first and rejects key-auth requests before the key-auth plugin can validate the credential. **Fix: always create a dedicated service per auth mechanism.** Same pattern as OAuth routes using `mcp-oauth-service`.
+
+**CRITICAL LEARNING — Path rewriting required:**
+The MCP server only listens on `/mcp/sse` and `/mcp/messages`. With `strip_path: false`, Kong forwards the full path `/mcp/key/sse` which returns 404 from the MCP server. Used `request-transformer` plugin with `replace.uri` to rewrite the path before forwarding.
+
+**Test results:**
+- `GET /mcp/key/sse` (no key) → `{"message":"No API key found in request"}` 401 ✅
+- `GET /mcp/key/sse` (wrong key) → `{"message":"Unauthorized"}` 401 ✅
+- `GET /mcp/key/sse` (valid key) → SSE stream with rewritten endpoint event ✅
+- SSE endpoint event: `data: /mcp/key/messages?sessionId=XXX` (body_filter rewrite) ✅
+- JWT regression: `bash test/test-mcp-gateway.sh` → **10/10 pass** ✅
+
+**Files added:**
+- `scripts/konnect-add-key-auth-routes.ps1` — idempotent Phase 1 provisioning script
+- `api-key-config.json` — API key config (gitignored, contains key for Foundry setup)
+- `.gitignore` updated to include `api-key-config.json`
+
+**Kong entity IDs (reference):**
+- mcp-key-service: `dcb01bd5-b259-41ec-87a9-25c9b75bacc2`
+- mcp-key-sse route: `13ef058a-ae46-4b12-84ec-47b3dfe7ad0f`
+- mcp-key-messages route: `c0b1f5e1-7cef-4e57-aa6f-cd81139ef7d0`
+- key-auth plugin (service): `59943f09-a8bc-4b90-8b54-c91794c9d262`
+- post-function body_filter: `8749d27f-0ac8-4e0f-ba18-bb1c5f7a36c3`
+- request-transformer SSE: `e3cc1e9e-fb4a-4f29-9515-92439451ea11`
+- request-transformer messages: `e58ef9a0-6e1f-4a95-9749-d01714b0ba52`
+
+**Phase 2 (testing) and Phase 3 (Foundry migration) follow from here. JWT routes remain live as fallback.**
+

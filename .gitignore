@@ -6,3 +6,5 @@
 .squad/.scratch/
 # Squad: SubSquad activation file (local to this machine)
 .squad-workstream
+entra-oauth-config.json
+api-key-config.json
