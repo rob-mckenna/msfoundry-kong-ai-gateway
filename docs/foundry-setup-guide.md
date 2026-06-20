@@ -4,6 +4,8 @@
 
 This guide shows how to register the current Kong MCP Gateway in Microsoft Foundry using **key-based authentication** with a generated JWT.
 
+> This is the **JWT-only** guide. For the final dual-path setup covering both **JWT** and **OAuth**, use `docs/foundry-final-configuration.md`.
+
 ## Before You Start
 
 - Gateway SSE endpoint: `https://kongai-gw.graycoast-a8631da5.eastus2.azurecontainerapps.io/mcp/sse`

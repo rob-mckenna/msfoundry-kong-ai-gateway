@@ -1,0 +1,17 @@
+{
+  "_instructions": "Copy this file to api-key-config.json and fill in the values. Run scripts/setup-repo.ps1 to generate them automatically.",
+  "description": "Kong key-auth credential for foundry-mcp-client",
+  "consumer": "foundry-mcp-client",
+  "header_name": "X-API-Key",
+  "api_key": "<GENERATE: run scripts/setup-repo.ps1 or: openssl rand -hex 32>",
+  "sse_endpoint": "https://<YOUR_ACA_FQDN>/mcp/key/sse",
+  "msg_endpoint": "https://<YOUR_ACA_FQDN>/mcp/key/messages",
+  "created_at": "<ISO8601 timestamp when you ran setup>",
+  "note": "DO NOT COMMIT. Listed in .gitignore. Treat as a password — rotate every 90 days.",
+  "foundry_connection": {
+    "server_url": "https://<YOUR_ACA_FQDN>/mcp/key/sse",
+    "auth_type": "Key-based authentication",
+    "credential_name": "X-API-Key",
+    "credential_value": "<same as api_key above>"
+  }
+}

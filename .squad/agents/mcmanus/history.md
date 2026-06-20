@@ -120,3 +120,59 @@
 
 **Infrastructure concern:** Requires Kong to handle both route families; OIDC JWT plugin must be at service or route level for OAuth routes.
 
+### 2026-06-20 — Replace Sensitive Values with Placeholders in Documentation
+
+**Task:** Sanitize `docs/foundry-key-auth-setup.md` and `docs/mcp-inspector-setup.md` for source control by replacing embedded secrets with descriptive placeholders.
+
+**Changes made:**
+
+- `docs/foundry-key-auth-setup.md`:
+  - Replaced API key `e2ba9eeb...` with `<YOUR_API_KEY_FROM_api-key-config.json>` in all 6 occurrences (prerequisite block, connection table, Step 3 narrative, comparison table ×2, both curl examples in Troubleshooting)
+  - Replaced hardcoded gateway FQDN `https://kongai-gw.graycoast-a8631da5.eastus2.azurecontainerapps.io` with `<YOUR_GATEWAY_URL>` throughout
+  - Added inline notes explaining where to source each value (`api-key-config.json`, `scripts/deploy-simple.sh`)
+  - Added explicit warning: never commit `api-key-config.json`
+
+- `docs/mcp-inspector-setup.md`:
+  - Replaced API key and gateway URL in Quick Start, Option 1, Option 2 (JWT), and Next Steps sections
+  - Replaced hardcoded `$GatewayUrl` in the PowerShell wrapper script with `<YOUR_GATEWAY_URL>` and an explanatory comment
+  - Key-reading logic in the PowerShell script already correctly sourced from `api-key-config.json` — left intact
+
+**Pattern adopted:** `<YOUR_X_FROM_y>` naming makes it unambiguous where each value comes from. Inline notes point to the generation script or config file.
+
+**Lesson:** Other docs files (`architecture.md`, `key-auth-migration-plan.md`, `foundry-setup-guide.md`, etc.) also embed the same gateway FQDN — those are out of scope for this task but should be swept in a follow-up pass to make the full `docs/` folder source-control safe.
+
+### 2026-06-20 — Create Comprehensive Root README.md
+
+**Task:** Replace the existing minimal README with a comprehensive, scannable README serving as the project front door for new contributors.
+
+**Approach:**
+- Read all 21 docs in `docs/`, the existing README, `poc-completion-status.md`, `decisions.md`, and McManus history before writing.
+- Designed around the "impatient user first" principle — `⚡ Quick Start` section leads, detailed content follows.
+- Used collapsible `<details>` blocks for the three auth paths to keep the page scannable.
+
+**Structure delivered:**
+1. Title + warning badge
+2. One-line project description
+3. ⚡ Quick Start (5 steps)
+4. 🗺️ Architecture — text diagram showing all three auth paths + Azure OpenAI + internal services
+5. ✨ Features table with status badges
+6. 🧩 Components table
+7. 🔐 Authentication Paths — three collapsible sections (JWT, API Key, OAuth)
+8. 🚀 Deployment — prerequisites table, `deploy-simple.sh` workflow, Konnect 4-script path, post-deploy RBAC command
+9. 🧪 Testing — test suite + MCP Inspector + JWT generation commands
+10. 🔌 MCP Tools table
+11. 🗂️ Documentation Index — 5 sub-tables covering setup, Konnect, OAuth, architecture, and testing
+12. 📁 Project Structure — annotated tree
+13. 🤝 Contributing — feature guide, testing expectations, security practices
+14. 📋 Current Status table with link to `poc-completion-status.md`
+15. 🏷️ Credits — Squad team table + dependencies
+16. 🔒 Security Notes
+
+**Key decisions:**
+- All three auth route families documented with explicit route paths
+- Architecture diagram updated to show the three parallel auth paths (JWT, API Key, OAuth)
+- Konnect deployment given its own subsection (not buried) since it is the required path for OAuth
+- Documentation Index organised into thematic sub-tables, not one flat list
+
+**Lesson:** The README was the last piece of the docs layer to reflect the evolved three-auth architecture. Future README edits should track changes to `poc-completion-status.md` so the Status table stays accurate.
+

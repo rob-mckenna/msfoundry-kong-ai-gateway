@@ -1,0 +1,28 @@
+FROM kong/kong-gateway:3.7
+
+# Konnect data plane image for ACA.
+# Runtime configuration comes from Konnect + ACA env vars rather than kong.yaml.
+ENV KONG_ROLE=data_plane \
+    KONG_DATABASE=off \
+    KONG_CLUSTER_MTLS=pki \
+    KONG_KONNECT_MODE=on \
+    KONG_LUA_SSL_TRUSTED_CERTIFICATE=system \
+    KONG_PROXY_ACCESS_LOG=/dev/stdout \
+    KONG_ADMIN_ACCESS_LOG=/dev/stdout \
+    KONG_PROXY_ERROR_LOG=/dev/stderr \
+    KONG_ADMIN_ERROR_LOG=/dev/stderr \
+    KONG_STATUS_LISTEN=0.0.0.0:8100 \
+    KONG_ADMIN_LISTEN=off \
+    KONG_UNTRUSTED_LUA=on \
+    KONG_PROXY_BUFFERING=off \
+    KONG_NGINX_HTTP_PROXY_BUFFERING=off \
+    KONG_NGINX_PROXY_PROXY_SEND_TIMEOUT=600s \
+    KONG_NGINX_PROXY_PROXY_READ_TIMEOUT=600s
+
+EXPOSE 8000 8443 8100
+
+# Capture managed identity env vars before nginx strips them, then start Kong.
+# This preserves the existing /chat post-function behavior if the chat service
+# is recreated in Konnect.
+ENTRYPOINT ["/bin/sh", "-c"]
+CMD ["echo \"IDENTITY_ENDPOINT=${IDENTITY_ENDPOINT}\" > /tmp/mi_env && echo \"IDENTITY_HEADER=${IDENTITY_HEADER}\" >> /tmp/mi_env && exec /entrypoint.sh kong docker-start"]

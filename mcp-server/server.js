@@ -4,6 +4,7 @@ import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { z } from 'zod';
 
 const DEFAULT_MOCK_API_URL = 'https://kongai-mock-api.internal.graycoast-a8631da5.eastus2.azurecontainerapps.io';
+const DEFAULT_PUBLIC_MESSAGES_PATH = '/mcp/messages';
 const PORT = Number.parseInt(process.env.PORT ?? '8080', 10);
 const MOCK_API_URL = (process.env.MOCK_API_URL ?? DEFAULT_MOCK_API_URL).replace(/\/$/, '');
 
@@ -28,6 +29,23 @@ function formatError(error, fallbackMessage) {
   }
 
   return fallbackMessage;
+}
+
+function getPublicMessagesPath(req) {
+  const headerValue = req.get('x-external-mcp-messages-path');
+
+  if (!headerValue) {
+    return DEFAULT_PUBLIC_MESSAGES_PATH;
+  }
+
+  if (!headerValue.startsWith('/')) {
+    log('Ignoring invalid public MCP messages path override', {
+      headerValue
+    });
+    return DEFAULT_PUBLIC_MESSAGES_PATH;
+  }
+
+  return headerValue;
 }
 
 async function callMockApi(path, options = {}) {
@@ -225,12 +243,17 @@ app.get('/health', async (req, res) => {
 });
 
 app.get('/mcp/sse', async (req, res) => {
-  log('Opening SSE transport', { clientIp: req.ip });
+  const publicMessagesPath = getPublicMessagesPath(req);
+
+  log('Opening SSE transport', {
+    clientIp: req.ip,
+    publicMessagesPath
+  });
 
   res.setHeader('X-Accel-Buffering', 'no');
 
   try {
-    const transport = new SSEServerTransport('/mcp/messages', res);
+    const transport = new SSEServerTransport(publicMessagesPath, res);
     const sessionId = transport.sessionId;
 
     transports.set(sessionId, transport);
@@ -302,7 +325,8 @@ const listener = app.listen(PORT, '0.0.0.0', () => {
     port: PORT,
     mockApiUrl: MOCK_API_URL,
     sseEndpoint: '/mcp/sse',
-    messagesEndpoint: '/mcp/messages',
+    defaultMessagesEndpoint: DEFAULT_PUBLIC_MESSAGES_PATH,
+    messagesPathOverrideHeader: 'x-external-mcp-messages-path',
     healthEndpoint: '/health'
   });
 });

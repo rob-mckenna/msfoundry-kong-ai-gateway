@@ -54,6 +54,68 @@ Both scripts support these environment variables:
 - `INVALID_JWT_TOKEN` — optional invalid-token override
 - `KEEP_TEST_ARTIFACTS=1` — keep scratch files under `test/.tmp-mcp-gateway-*`
 
+## OAuth route family validation
+
+The Konnect OAuth passthrough routes are:
+
+- `GET /mcp/oauth/sse`
+- `POST /mcp/oauth/messages`
+
+These routes are protected by the Kong `openid-connect` plugin and expect a
+real Microsoft Entra access token for the custom MCP audience. The gateway
+validates issuer/signature/audience and does not require the `scp` claim for
+the current Foundry POC.
+
+### Automated checks
+
+The following checks can be run now without a browser sign-in:
+
+| Check | Expected | Actual |
+| --- | --- | --- |
+| `GET /mcp/oauth/sse` without `Authorization` | `401 Unauthorized` | `401 Unauthorized` |
+| `OPTIONS /mcp/oauth/sse` from `https://foundry.azure.microsoft.com` | `200 OK` with CORS headers | `200 OK`; `Access-Control-Allow-Origin`, `...-Methods`, and `...-Headers` returned |
+| `GET /mcp/oauth/sse` with `Bearer invalid-entra-token` | `401 Unauthorized` | `401 Unauthorized` |
+| `GET /mcp/oauth/sse` with the existing HS256 JWT | `401 Unauthorized` | `401 Unauthorized` |
+| `POST /mcp/oauth/messages?sessionId=test-session` without token | `401 Unauthorized` | `401 Unauthorized` |
+| Existing JWT regression suite | `10/10` pass | `10/10` pass |
+
+### Manual OAuth token testing guide
+
+Real user-token validation still requires a browser-driven OAuth flow.
+
+1. Get a user token with MSAL.js, Postman, or another interactive OAuth client.
+2. Request the custom MCP scope if your client supports it:
+   - `api://d50b1d91-8be2-48cd-9615-3fbba4e04a2b/MCP.Use`
+3. Complete user sign-in and consent if prompted.
+4. Paste the resulting access token into the request:
+
+```powershell
+$OAUTH_TOKEN = "<paste-token-from-browser>"
+curl -N -H "Authorization: Bearer $OAUTH_TOKEN" https://kongai-gw.graycoast-a8631da5.eastus2.azurecontainerapps.io/mcp/oauth/sse
+```
+
+Expected result:
+
+- The SSE connection opens successfully.
+- The bootstrap event advertises the OAuth message path.
+- The downstream MCP server receives verified user headers such as:
+  - `x-user-oid`
+  - `x-user-upn`
+  - `x-user-name`
+
+Why this part is manual:
+
+- Browser sign-in and consent are required for a real delegated user token.
+- A client secret alone is not enough for user identity passthrough testing.
+- In Foundry, Foundry performs this OAuth flow on the user's behalf.
+
+### Dual-auth route comparison
+
+| Route family | Endpoints | Token type | Automated status |
+| --- | --- | --- | --- |
+| JWT / key-based POC | `/mcp/sse`, `/mcp/messages` | HS256 JWT (`iss=kong-poc`) | Working; regression suite passes |
+| OAuth passthrough | `/mcp/oauth/sse`, `/mcp/oauth/messages` | Microsoft Entra user access token | Route and rejection behavior verified; real success path pending manual browser test |
+
 ## Foundry-specific validation scenarios
 
 These scripts do not automate Foundry itself, but they validate the exact gateway behavior Foundry depends on.

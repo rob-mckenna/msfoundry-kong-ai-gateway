@@ -10,7 +10,7 @@ consumers:
 
 services:
   - name: chat
-    url: https://msf-demo-01.openai.azure.com/openai/v1/chat/completions  # Azure OpenAI endpoint (OpenAI-compatible /v1 path)
+    url: https://msf-demo-01.openai.azure.com/openai/deployments/gpt-4.1/chat/completions
     plugins:
       # JWT scoped to the chat service only — does not affect other services added later
       - name: jwt
@@ -21,6 +21,11 @@ services:
             - jwt
           key_claim_name: iss
           secret_is_base64: false
+      - name: request-transformer
+        config:
+          add:
+            querystring:
+              - api-version:2024-02-15-preview
       - name: post-function
         config:
           access:

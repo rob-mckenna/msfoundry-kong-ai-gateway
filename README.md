@@ -1,76 +1,154 @@
-# Kong AI Gateway POC for Microsoft Foundry
+# Kong AI Gateway — Microsoft Foundry POC
 
-Developer-focused proof of concept for running **Kong 3.7 in DB-less mode on Azure Container Apps** as an **AI Gateway** in front of **Azure OpenAI (GPT-4.1)**. Kong validates a client JWT, then swaps it for an Azure managed identity token before proxying the request upstream.
+> ⚠️ **POC / demo only.** Not production-ready. Rotate the demo credentials, harden auth, and formalise secret management before any real use.
 
-> [!WARNING]
-> **POC / demo only.** This repo is intentionally simple and is **not production-ready**. Rotate the demo JWT secret, harden auth, and formalize secret management before any real use.
+Kong 3.7 running in DB-less mode on **Azure Container Apps**, acting as an **AI Gateway** in front of **Azure OpenAI** and an **MCP-over-SSE server** wired to Microsoft Foundry. Kong handles all three authentication models (JWT, API Key, OAuth), swaps client credentials for a managed identity token when calling Azure OpenAI, and routes Foundry tool invocations to an internal MCP server.
 
-## Architecture
+---
+
+## ⚡ Quick Start
+
+1. **Prerequisites:** Install required tools — see [Setup Guide](docs/repo-setup.md)
+2. **Configure:** Run `.\scripts\setup-repo.ps1` (creates credential files, checks tooling)
+3. **Deploy:** Run `bash scripts/deploy-simple.sh` (4-phase cloud build + infra deploy)
+4. **Test:** Run `bash test/test-mcp-gateway.sh` — expect `10/10 PASS`
+5. **Explore:** Try the [MCP Inspector](docs/mcp-inspector-setup.md) or connect from [Microsoft Foundry](docs/foundry-final-configuration.md)
+
+---
+
+## 🗺️ Architecture
 
 ```text
-Client
-  |
-  | 1) POST /chat
-  |    Authorization: Bearer <client JWT>
-  v
-Kong 3.7 on Azure Container Apps (DB-less, declarative config)
-  |
-  | 2) jwt plugin validates HS256 token
-  |    issuer (iss): kong-poc
-  |
-  | 3) post-function plugin calls ACA managed identity endpoint
-  |    and fetches an access token for https://cognitiveservices.azure.com/
-  |
-  | 4) Kong replaces Authorization header with:
-  |    Bearer <managed identity token>
-  v
-Azure OpenAI (GPT-4.1)
-  |
-  v
-Response returned through Kong to client
+External Clients / Microsoft Foundry
+          │
+          │ HTTPS
+          ▼
+┌─────────────────────────────────────────────────┐
+│        Kong 3.7 Gateway (ACA — public)           │
+│                                                  │
+│  POST /chat ──────────────────────────────────► Azure OpenAI (GPT-4.1)
+│    └─ jwt plugin validates HS256 token           │ ↑ managed identity token
+│    └─ post-function fetches MI token             │
+│                                                  │
+│  GET  /mcp/sse          (JWT)                    │
+│  POST /mcp/messages     (JWT)                    │
+│  GET  /mcp/key/sse      (API Key)      ─────────►  MCP Server (ACA — internal)
+│  POST /mcp/key/messages (API Key)                       │
+│  GET  /mcp/oauth/sse    (Entra OAuth)                   ▼
+│  POST /mcp/oauth/msgs   (Entra OAuth)           Mock API (ACA — internal)
+│                                                  (weather, calculate)
+└─────────────────────────────────────────────────┘
+          │
+          ▼
+  Kong Konnect (control plane — optional)
+  Azure Container Registry (image store)
+  Log Analytics (unified logging)
 ```
 
-### Current deployment target
+---
 
-- **Resource group:** `rg-kong-aca`
-- **Region:** `eastus2`
-- **Gateway FQDN:** `https://kongai-gw.graycoast-a8631da5.eastus2.azurecontainerapps.io`
-- **Runtime:** Azure Container Apps with **system-assigned managed identity**
-- **Auth to Azure OpenAI:** `Cognitive Services OpenAI User` role on the target Azure OpenAI resource
-- **API key storage:** none
+## ✨ Features
 
-## Prerequisites
+| Feature | Status |
+|---|---|
+| 🔒 **JWT authentication** (`/mcp/sse`, `/mcp/messages`, `/chat`) | ✅ Validated |
+| 🔑 **API Key authentication** (`/mcp/key/sse`, `/mcp/key/messages`) | ✅ Validated |
+| 🪪 **OAuth / Entra passthrough** (`/mcp/oauth/sse`, `/mcp/oauth/messages`) | ✅ Configured |
+| 🤖 **Azure OpenAI proxy** via managed identity (no stored API keys) | ✅ Validated |
+| 🛠️ **MCP Gateway** — Foundry-compatible SSE + JSON-RPC tool server | ✅ Validated |
+| 📦 **Kong Konnect integration** — control plane with ACA data plane | ✅ Configured |
+| 🏗️ **Infrastructure as Code** — Bicep, ACR cloud builds, no local Docker | ✅ Validated |
+| 🔄 **GitHub Actions CI/CD** — OIDC federated identity, staged deploy | ✅ Configured |
+| 🧪 **Automated test suite** — Bash + PowerShell, 10 gateway tests | ✅ Validated |
 
-- Azure CLI (`az`) with access to create resource groups, ACR, and Container Apps
-- An Azure subscription selected in Azure CLI
-- Bash shell to run `scripts/deploy-simple.sh`
-- **Windows Git Bash:** set `MSYS_NO_PATHCONV=1` for manual Azure CLI commands if needed (the deploy script exports it)
-- Python 3 for generating a demo JWT during testing
-- An Azure OpenAI resource reachable by Kong
+---
 
-Login and choose a subscription:
+## 🧩 Components
 
-```bash
-az login
-az account set --subscription "<your-subscription-id-or-name>"
+| Component | Role | Location |
+|---|---|---|
+| **Kong Gateway** | Public ingress, auth enforcement, proxy | `kong.yaml`, `Dockerfile`, `infra/main.bicep` |
+| **MCP Server** | SSE transport + tool registration for Foundry | `mcp-server/` |
+| **Mock API** | Internal demo backend (`get_weather`, `calculate`) | `mock-api/` |
+| **Azure OpenAI** | LLM upstream for `/chat` | External — accessed via managed identity |
+| **Azure Container Registry** | Stores all container images | `infra/acr.bicep` |
+| **Container Apps Environment** | Shared runtime and internal DNS | `infra/acr.bicep` |
+| **Kong Konnect** | Optional control plane (needed for OAuth plugin) | `docs/kong-konnect-setup.md` |
+
+---
+
+## 🔐 Authentication Paths
+
+<details>
+<summary><strong>Path 1 — JWT Bearer Token</strong> (baseline)</summary>
+
+- **Routes:** `GET /mcp/sse`, `POST /mcp/messages`, `POST /chat`
+- **How:** `Authorization: Bearer <HS256-JWT>` — issuer `kong-poc`, secret `poc-secret-change-me`
+- **Generate:** `.\scripts\generate-foundry-jwt.ps1`
+- **Guide:** [Foundry Integration](docs/foundry-integration.md)
+
+</details>
+
+<details>
+<summary><strong>Path 2 — API Key</strong> (simplest for tooling)</summary>
+
+- **Routes:** `GET /mcp/key/sse`, `POST /mcp/key/messages`
+- **How:** `X-API-Key: <key>` header — key stored in `api-key-config.json`
+- **Setup:** [Foundry Key Auth Setup](docs/foundry-key-auth-setup.md)
+- **Recommended for:** MCP Inspector, local dev, Foundry POC connections
+
+</details>
+
+<details>
+<summary><strong>Path 3 — OAuth / Entra ID</strong> (identity passthrough)</summary>
+
+- **Routes:** `GET /mcp/oauth/sse`, `POST /mcp/oauth/messages`
+- **How:** Entra-issued access token validated at Kong via OIDC/JWKS; verified claims forwarded downstream
+- **Requires:** Kong Konnect (`openid-connect` enterprise plugin)
+- **Setup:** [Entra App Registration](docs/entra-app-registration.md) → [OAuth Config](docs/kong-oauth-config.md)
+- **Requires:** `entra-oauth-config.json` populated from template
+
+</details>
+
+---
+
+## 🚀 Deployment
+
+### Prerequisites
+
+See [docs/repo-setup.md](docs/repo-setup.md) for the full tool list. Quick summary:
+
+| Tool | Required for |
+|---|---|
+| `az` (Azure CLI) | All deployments |
+| `git` | Source control |
+| `node` / `npm` | MCP server runtime + tests |
+| `python` / `python3` | JWT generation |
+| Bash (Git Bash on Windows) | Deploy + test scripts |
+
+```powershell
+# First-time setup — checks tools, creates credential file stubs
+.\scripts\setup-repo.ps1
+
+# Also download deck and kongctl (needed for Konnect path)
+.\scripts\setup-repo.ps1 -InstallTools
 ```
 
-## Quick Start / Deployment
+### Deploy to Azure
 
-This repo uses a **4-phase manual deployment** script:
-
-1. Provision **ACR**, **Log Analytics**, and **Container App Environment**
-2. Build the Kong image in **ACR cloud build** (`az acr build`) — **no local Docker required**
-3. Build and deploy the internal **Mock API** and **MCP Server** Container Apps
-4. Deploy the **Kong Container App** with its custom image
-
-Run:
+The deploy script runs four phases — no local Docker required (images build in ACR):
 
 ```bash
+# Phase 1: ACR + Log Analytics + Container Apps Environment
+# Phase 2: Build Kong image in ACR cloud build
+# Phase 2.5: Build + deploy Mock API (internal)
+# Phase 2.6: Build + deploy MCP Server (internal)
+# Phase 3: Deploy Kong Container App with custom image
+
 bash scripts/deploy-simple.sh
 ```
 
-After deployment, grant the Container App's managed identity access to Azure OpenAI if you have not already:
+After deploy, grant the Kong managed identity access to Azure OpenAI:
 
 ```bash
 RG="rg-kong-aca"
@@ -88,200 +166,235 @@ az role assignment create \
   --scope "$OPENAI_ID"
 ```
 
-## Testing
+### Kong Konnect deployment (OAuth path)
 
-### 1) Generate a demo JWT
+To enable OAuth you need Kong Konnect. See [Kong Konnect Quick Start](docs/kong-konnect-quickstart.md).
 
-The current declarative config expects:
+```powershell
+# 1. Set up Konnect control plane + Key Vault cert
+.\scripts\konnect-setup.ps1 -Pat $env:KONNECT_PAT -KeyVaultName <kv>
 
-- **issuer (`iss`)**: `kong-poc`
-- **algorithm**: `HS256`
-- **secret**: `poc-secret-change-me`
+# 2. Deploy Konnect-backed ACA data plane
+.\scripts\deploy-konnect-dataplane.ps1
 
-Generate a token with Python 3 (standard library only):
+# 3. Sync existing gateway config into Konnect
+.\scripts\konnect-sync-config.ps1 -Pat $env:KONNECT_PAT
 
-```bash
-python - <<'PY'
-import base64, hashlib, hmac, json, time
-
-def b64url(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
-
-header = {"alg": "HS256", "typ": "JWT"}
-payload = {
-    "iss": "kong-poc",
-    "sub": "poc-user",
-    "exp": int(time.time()) + 3600
-}
-secret = b"poc-secret-change-me"
-
-signing_input = ".".join([
-    b64url(json.dumps(header, separators=(",", ":")).encode()),
-    b64url(json.dumps(payload, separators=(",", ":")).encode())
-]).encode()
-
-signature = hmac.new(secret, signing_input, hashlib.sha256).digest()
-print(signing_input.decode() + "." + b64url(signature))
-PY
+# 4. Add OAuth route family + openid-connect plugin
+.\scripts\konnect-add-oauth-routes.ps1 -Pat $env:KONNECT_PAT
 ```
 
-### 2) Send a test request
+---
+
+## 🧪 Testing
 
 ```bash
-FQDN="https://kongai-gw.graycoast-a8631da5.eastus2.azurecontainerapps.io"
-TOKEN="<paste-jwt-here>"
+# Full MCP gateway test suite (10 tests — JWT + chat)
+bash test/test-mcp-gateway.sh
 
-curl -i "$FQDN/chat" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gpt-4.1",
-    "messages": [
-      { "role": "user", "content": "Reply with: gateway ok" }
-    ]
-  }'
+# PowerShell variant
+.\test\test-mcp-gateway.ps1
 ```
 
-If your Azure OpenAI deployment name differs from `gpt-4.1`, replace the `model` value accordingly.
+### MCP Inspector (interactive)
 
-## Phase 4 — Microsoft Foundry Integration
+```bash
+# API Key (simplest)
+npx @modelcontextprotocol/inspector sse \
+  "https://kongai-gw.graycoast-a8631da5.eastus2.azurecontainerapps.io/mcp/key/sse" \
+  --header "X-API-Key: <your-key>"
 
-This phase documents how to point a Foundry MCP-capable client at the deployed Kong gateway. Foundry product surfaces can label the settings differently, so use the values below when configuring a custom MCP server or external tool connector.
+# JWT
+npx @modelcontextprotocol/inspector sse \
+  "https://kongai-gw.graycoast-a8631da5.eastus2.azurecontainerapps.io/mcp/sse" \
+  --header "Authorization: Bearer <your-jwt>"
+```
 
-### Microsoft Foundry Integration
+Full guide: [MCP Inspector Setup](docs/mcp-inspector-setup.md)
 
-#### Prerequisites
+### Manual JWT generation
 
-- A Foundry workspace and project where custom MCP server registration is allowed
-- A Foundry client or agent surface that supports **SSE-based MCP** connections
-- Outbound HTTPS connectivity from Foundry to:
-  - `https://kongai-gw.graycoast-a8631da5.eastus2.azurecontainerapps.io/mcp/sse`
-  - `https://kongai-gw.graycoast-a8631da5.eastus2.azurecontainerapps.io/mcp/messages`
-- A way to provision and store a bearer token for the gateway
-- Agreement that the current auth model is **POC only**:
-  - issuer: `kong-poc`
-  - algorithm: `HS256`
-  - secret: `poc-secret-change-me`
+```bash
+# PowerShell
+.\scripts\generate-foundry-jwt.ps1
 
-#### Configuration Steps
+# Bash
+bash scripts/generate-foundry-jwt.sh
+```
 
-1. **Configure the MCP endpoint in Foundry**
-   - Register the Kong MCP Gateway SSE endpoint:
-     - `https://kongai-gw.graycoast-a8631da5.eastus2.azurecontainerapps.io/mcp/sse`
-   - Set the transport to **Server-Sent Events (SSE)**.
-   - Do not hardcode a session-specific `/mcp/messages` URL up front; the SSE bootstrap flow returns the `sessionId` that Foundry must use.
-2. **Set up authentication**
-   - Provision a JWT signed with the POC secret and `iss=kong-poc`.
-   - Configure Foundry to send `Authorization: Bearer <token>` when opening `GET /mcp/sse`.
-   - Ensure the same bearer token is also sent on subsequent `POST /mcp/messages?sessionId=<uuid>` calls.
-   - For production, replace the shared secret model with managed key storage and the auth mechanism required by your Foundry environment.
-3. **Register the MCP server**
-   - After the SSE connection opens, Foundry should:
-     - read the bootstrap event containing the message endpoint
-     - send `initialize`
-     - send `notifications/initialized`
-     - send `tools/list`
-   - Successful registration exposes the gateway tools to the Foundry agent/session.
+---
 
-#### Available Tools
+## 🔌 MCP Tools
 
-- `get_weather(location: string)` — returns mock weather data for the requested city
-- `calculate(operation: string, a: number, b: number)` — performs `add`, `subtract`, or `multiply`
+Two tools are exposed through the gateway to Foundry agents:
 
-#### Testing
+| Tool | Description | Parameters |
+|---|---|---|
+| `get_weather` | Returns mock weather for a city | `location: string` |
+| `calculate` | Performs arithmetic | `operation: add\|subtract\|multiply`, `a: number`, `b: number` |
 
-- First validate the gateway directly with:
-  - `bash test/test-mcp-gateway.sh`
-- Then validate from Foundry:
-  1. Connect to the MCP server
-  2. Confirm `tools/list` returns `get_weather` and `calculate`
-  3. Ask Foundry to invoke:
-     - `get_weather` with a prompt such as “What is the weather in Seattle?”
-     - `calculate` with a prompt such as “Multiply 6 and 7.”
+---
 
-#### Expected Behavior
+## 🗂️ Documentation Index
 
-- Foundry should show a successful MCP connection and tool discovery result.
-- `get_weather` should return structured weather fields including `location`, `temperature`, `condition`, `humidity`, and `timestamp`.
-- `calculate` should return `operation`, `a`, `b`, and `result`.
-- When the Foundry experience supports tool-aware answers, the model should incorporate the tool result into its response.
+### Setup
 
-#### Troubleshooting
+| Doc | Purpose |
+|---|---|
+| [repo-setup.md](docs/repo-setup.md) | Prerequisites, first-time setup, credential files |
+| [squad-automated-setup.md](docs/squad-automated-setup.md) | Automated setup via Squad agents |
+| [foundry-setup-guide.md](docs/foundry-setup-guide.md) | Microsoft Foundry project setup |
+| [foundry-final-configuration.md](docs/foundry-final-configuration.md) | Final Foundry connection config steps |
+| [foundry-key-auth-setup.md](docs/foundry-key-auth-setup.md) | API Key auth setup for Foundry |
 
-- **401 / 403 from `/mcp/sse` or `/mcp/messages`:** confirm the JWT is unexpired, signed with `poc-secret-change-me`, and uses `iss=kong-poc`.
-- **SSE opens but tools never load:** Foundry may not be sending follow-up `POST /mcp/messages?sessionId=...` requests or may be omitting the bearer token on those requests.
-- **404 `Unknown MCP session`:** the `sessionId` from the SSE bootstrap was not preserved or the SSE session closed before the POST request was sent.
-- **Timeouts or stalled tool calls:** verify the client supports SSE transports and that `/mcp/sse` and `/mcp/messages` remain routed through Kong.
-- **Protocol mismatch:** validate that the Foundry MCP client supports the same JSON-RPC-over-SSE pattern used by this gateway.
+### Konnect
 
-For the full guide, see:
+| Doc | Purpose |
+|---|---|
+| [kong-konnect-quickstart.md](docs/kong-konnect-quickstart.md) | Fastest path to a running Konnect data plane |
+| [kong-konnect-setup.md](docs/kong-konnect-setup.md) | Full Konnect setup walkthrough |
+| [kong-konnect-automation.md](docs/kong-konnect-automation.md) | Script-based automation for Konnect |
+| [konnect-automation-checklist.md](docs/konnect-automation-checklist.md) | Step-by-step Konnect cutover checklist |
+| [kong-yaml-to-konnect.md](docs/kong-yaml-to-konnect.md) | Migrating from DB-less `kong.yaml` to Konnect |
+| [kong-konnect-troubleshooting.md](docs/kong-konnect-troubleshooting.md) | Konnect-specific troubleshooting |
 
-- `docs/foundry-integration.md`
-- `docs/architecture.md`
+### OAuth / Entra
 
-## Project Structure
+| Doc | Purpose |
+|---|---|
+| [entra-app-registration.md](docs/entra-app-registration.md) | Creating Entra app registrations |
+| [kong-oauth-config.md](docs/kong-oauth-config.md) | Configuring `openid-connect` plugin in Konnect |
+| [oauth-implementation-plan.md](docs/oauth-implementation-plan.md) | OAuth design decisions and phasing |
+| [oauth-implementation-phases.md](docs/oauth-implementation-phases.md) | Phase-by-phase OAuth implementation guide |
+| [oauth-testing.md](docs/oauth-testing.md) | How to test the OAuth route family |
+
+### Architecture & Reference
+
+| Doc | Purpose |
+|---|---|
+| [architecture.md](docs/architecture.md) | End-to-end system architecture, data flows, component map |
+| [foundry-integration.md](docs/foundry-integration.md) | Detailed Foundry MCP integration guide |
+| [foundry-auth-analysis.md](docs/foundry-auth-analysis.md) | Auth model analysis and trade-offs |
+| [key-auth-migration-plan.md](docs/key-auth-migration-plan.md) | Migration plan from JWT to API Key baseline |
+| [poc-completion-status.md](docs/poc-completion-status.md) | Current POC status and remaining steps |
+
+### Testing & Debugging
+
+| Doc | Purpose |
+|---|---|
+| [mcp-inspector-setup.md](docs/mcp-inspector-setup.md) | Using MCP Inspector for local tool testing |
+| [test/README.md](test/README.md) | Test suite overview |
+
+---
+
+## 📁 Project Structure
 
 ```text
 .
-├── Dockerfile                  # Kong 3.7 image with custom entrypoint for managed identity env capture
-├── docs/
-│   ├── architecture.md         # End-to-end architecture, deployment flow, and key decisions
-│   └── foundry-integration.md  # Detailed Microsoft Foundry integration guide
-├── kong.yaml                   # Declarative Kong config: consumer, service, route, plugins
+├── Dockerfile                      # Kong 3.7 DB-less with managed identity env capture
+├── Dockerfile.konnect              # Kong 3.7 variant for Konnect data plane
+├── kong.yaml                       # Declarative gateway config (DB-less baseline)
+├── konnect-connection.json.template  # Konnect control plane connection template
+├── api-key-config.json.template    # API Key credential template
+├── entra-oauth-config.json.template  # Entra OAuth config template
+│
 ├── infra/
-│   ├── acr.bicep               # Phase 1 infra: ACR, Log Analytics, Container App Environment
-│   ├── main.bicep              # Kong Container App deploy: probes, ACR auth, runtime env
-│   ├── mock-api.bicep          # Internal Mock API Container App
-│   └── mcp-server.bicep        # Internal MCP Server Container App
-├── mock-api/                   # Internal mock REST API used by the MCP server
-├── mcp-server/                 # MCP-over-SSE server that wraps mock-api endpoints as tools
+│   ├── acr.bicep                   # Phase 1: ACR + Log Analytics + ACA Environment
+│   ├── main.bicep                  # Kong Container App
+│   ├── mock-api.bicep              # Mock API Container App (internal)
+│   └── mcp-server.bicep            # MCP Server Container App (internal)
+│
+├── mcp-server/                     # MCP-over-SSE server (Node.js 22, @modelcontextprotocol/sdk)
+├── mock-api/                       # Internal REST backend (Express.js, weather + calculate)
+│
 ├── scripts/
-│   └── deploy-simple.sh        # 4-phase manual deployment script
+│   ├── setup-repo.ps1              # Onboarding: tool checks, credential file stubs, binary downloads
+│   ├── deploy-simple.sh            # 4-phase Azure deploy (no local Docker)
+│   ├── konnect-setup.ps1 / .sh     # Konnect control plane + Key Vault cert setup
+│   ├── konnect-sync-config.ps1/.sh # Sync kong.yaml into Konnect
+│   ├── konnect-add-oauth-routes.ps1/.sh  # Add OAuth route family
+│   ├── konnect-add-key-auth-routes.ps1   # Add API Key route family
+│   ├── deploy-konnect-dataplane.ps1/.sh  # ACA data plane for Konnect
+│   ├── generate-foundry-jwt.ps1/.sh      # JWT generation helper
+│   └── start-mcp-inspector.ps1    # Launch MCP Inspector with auth
+│
+├── test/
+│   ├── test-mcp-gateway.sh         # Bash test suite (10 tests)
+│   └── test-mcp-gateway.ps1        # PowerShell test suite
+│
+├── docs/                           # Full documentation (see Documentation Index above)
+│
 └── .github/
     └── workflows/
-        └── deploy.yml          # CI/CD workflow (planned / being created in parallel; may be absent here)
+        └── deploy.yml              # CI/CD: OIDC + staged build + deploy
 ```
 
-## Configuration
+---
 
-### `kong.yaml`
+## 🤝 Contributing
 
-The gateway is fully declarative and currently defines:
+### Adding a feature
 
-- `_format_version: "2.1"` for Kong compatibility with nested JWT credentials
-- One **POC consumer**: `poc-user`
-- One **JWT credential**:
-  - key / issuer: `kong-poc`
-  - algorithm: `HS256`
-- One **service**: `chat`
-- One **route**: `POST /chat`
-- Service-level plugins:
-  - `jwt` for client token validation
-  - `post-function` for managed identity token fetch + bearer injection
-  - `rate-limiting`
-  - `cors`
+1. Read [architecture.md](docs/architecture.md) first — understand the three-layer flow (Kong → MCP Server → Mock API).
+2. New MCP tools go in `mock-api/server.js` (REST endpoint) and `mcp-server/server.js` (tool registration).
+3. New Kong routes go in `kong.yaml` (DB-less) **or** via a `scripts/konnect-add-*.ps1` script (Konnect).
+4. New Bicep changes follow the two-phase pattern: `infra/acr.bicep` for environment infra, `infra/main.bicep` (or a new `infra/*.bicep`) for apps.
 
-Common edits:
+### Testing expectations
 
-- **Change the upstream model endpoint:** update `services[].url`
-- **Add routes:** append entries under `services[].routes`
-- **Adjust auth behavior:** edit the service-level `jwt` plugin config
-- **Tune request handling:** update rate limiting or CORS plugin settings
+- All PRs should pass `bash test/test-mcp-gateway.sh` (10/10) before merge.
+- When adding a new route, add a matching test case in `test/test-mcp-gateway.sh` and `test/test-mcp-gateway.ps1`.
+- Run both the Bash and PowerShell variants before marking a PR ready.
 
-### `Dockerfile`
+### Security practices
 
-The image:
+- **Never commit secrets.** `api-key-config.json`, `entra-oauth-config.json`, and `konnect-connection.json` are gitignored — keep them that way.
+- Rotate `poc-secret-change-me` before any shared deployment.
+- New Konnect automation scripts must source credentials from environment variables or Key Vault, not from repo files.
+- See [Security Notes in repo-setup.md](docs/repo-setup.md#security-notes) for gitignore rationale and rotation cadence.
 
-- Starts from `kong:3.7`
-- Copies `kong.yaml` into `/etc/kong/kong.yaml`
-- Runs Kong in **DB-less** mode
-- Enables `KONG_UNTRUSTED_LUA=on` for the post-function plugin
-- Captures `IDENTITY_ENDPOINT` and `IDENTITY_HEADER` before nginx startup so Lua can retrieve managed identity tokens
+---
 
-## Security Notes
+## 📋 Current Status
 
-- **POC secret in repo:** `poc-secret-change-me` must be rotated before any shared or non-local use
-- **Managed identity only:** this design avoids storing Azure OpenAI API keys in Kong or Container App secrets
-- **Role assignment required:** the Container App identity needs `Cognitive Services OpenAI User` on the target Azure OpenAI resource
-- **Demo auth only:** HS256 shared-secret JWTs are acceptable for this POC, but not the long-term auth strategy
-- **Future hardening needed:** add real secret management, production identity boundaries, observability, and CI/CD policy gates before broader rollout
+| Area | Status |
+|---|---|
+| Kong Gateway + ACA deployment | ✅ Complete |
+| Azure OpenAI `/chat` proxy | ✅ Validated |
+| JWT MCP route family | ✅ Validated (10/10) |
+| API Key MCP route family | ✅ Validated |
+| OAuth MCP route family | ✅ Configured, pending Foundry end-to-end |
+| Konnect control plane | ✅ Configured |
+| Microsoft Foundry connection | ⏳ Pending manual Foundry setup |
+
+Full status: [docs/poc-completion-status.md](docs/poc-completion-status.md)
+
+---
+
+## 🏷️ Credits
+
+**Squad team**
+
+| Role | Agent | Responsibility |
+|---|---|---|
+| 📝 DevRel / Docs | McManus | Documentation, guides, onboarding |
+| 🏗️ Infrastructure | Keaton | Architecture decisions, Konnect design |
+| ⚙️ Kong Config | Fenster | Route config, plugin decisions |
+| 🔄 Orchestration | Scribe | Session logging, decision archiving |
+
+**Key dependencies**
+
+- [Kong 3.7](https://docs.konghq.com/) — DB-less API gateway
+- [Kong Konnect](https://konghq.com/products/kong-konnect) — control plane (OAuth path)
+- [@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/typescript-sdk) — MCP server runtime
+- [Azure Container Apps](https://learn.microsoft.com/azure/container-apps/) — managed serverless containers
+- [Azure OpenAI](https://learn.microsoft.com/azure/ai-services/openai/) — GPT-4.1 upstream
+
+---
+
+## 🔒 Security Notes
+
+- `poc-secret-change-me` is an intentional placeholder — **rotate before any shared use**
+- The Container App uses **system-assigned managed identity** — no Azure OpenAI API keys are stored anywhere
+- All internal services (MCP Server, Mock API) have **internal-only ACA ingress** — never internet-exposed
+- For credential rotation cadence and gitignore rationale, see [repo-setup.md](docs/repo-setup.md#security-notes)

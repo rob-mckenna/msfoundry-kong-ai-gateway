@@ -1,0 +1,15 @@
+{
+  "_instructions": "Copy this file to entra-oauth-config.json and fill in the values from your Azure Entra app registrations. See docs/entra-app-registration.md for setup steps.",
+  "tenant_id": "<YOUR_AZURE_TENANT_ID>",
+  "resource_api_app_id": "<RESOURCE_API_APP_ID from Entra app registration>",
+  "resource_api_audience": "api://<RESOURCE_API_APP_ID>",
+  "resource_api_scope": "api://<RESOURCE_API_APP_ID>/MCP.Use",
+  "client_app_id": "<CLIENT_APP_ID from Entra app registration>",
+  "client_secret": "<CLIENT_SECRET — generate a new secret in Entra portal, valid 24 months>",
+  "redirect_uri": "https://foundry.azure.microsoft.com/auth/callback",
+  "issuer": "https://login.microsoftonline.com/<YOUR_AZURE_TENANT_ID>/v2.0",
+  "auth_url": "https://login.microsoftonline.com/<YOUR_AZURE_TENANT_ID>/oauth2/v2.0/authorize",
+  "token_url": "https://login.microsoftonline.com/<YOUR_AZURE_TENANT_ID>/oauth2/v2.0/token",
+  "refresh_url": "https://login.microsoftonline.com/<YOUR_AZURE_TENANT_ID>/oauth2/v2.0/token",
+  "scopes": "openid profile offline_access api://<RESOURCE_API_APP_ID>/MCP.Use"
+}

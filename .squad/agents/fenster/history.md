@@ -351,3 +351,130 @@ The MCP server only listens on `/mcp/sse` and `/mcp/messages`. With `strip_path:
 
 **Phase 2 (testing) and Phase 3 (Foundry migration) follow from here. JWT routes remain live as fallback.**
 
+### 2026-06-20T01:52:56Z — CORS Fix for MCP Inspector (Browser Access to Key-Auth Routes)
+
+**Symptom:** MCP Inspector (browser-based tool at localhost) showing "Failed to fetch" when connecting to `/mcp/key/sse` and `/mcp/key/messages`.
+
+**Root cause — Three CORS gaps in the existing service-level plugin on `mcp-key-service`:**
+
+Verified from live OPTIONS preflight against the gateway:
+
+| Header | Current | Required |
+|---|---|---|
+| `Access-Control-Allow-Headers` | `Accept,Content-Type,X-API-Key,Cache-Control,Connection` | Must include `Authorization` |
+| `Access-Control-Expose-Headers` | `Content-Type,Cache-Control,Connection` | Must include `X-Session-ID` |
+| `Access-Control-Allow-Credentials` | absent | Must be `true` |
+
+**What was already correct:**
+- `Access-Control-Allow-Origin: *` ✅
+- `Access-Control-Allow-Methods: GET,POST,OPTIONS` ✅
+- `Access-Control-Max-Age: 3600` ✅
+
+**CORS plugin exists at service level** (`mcp-key-service`) — covers both `mcp-key-sse` and `mcp-key-messages` routes by inheritance. No route-level CORS plugins exist.
+
+**Fix created:** `scripts/fix-cors-key-routes.ps1`
+- Updates the service-level CORS plugin on `mcp-key-service` using the GET-modify-PUT pattern.
+- Sets: `headers = ['Content-Type', 'X-API-Key', 'Authorization']`, `exposed_headers = ['X-Session-ID']`, `credentials = true`, `origins = ['*']`, `methods = ['GET', 'POST', 'OPTIONS']`, `max_age = 3600`
+- Includes live verification: OPTIONS preflight on both routes + GET check for CORS headers.
+
+**⚠️ Browser CORS restriction — credentials + wildcard origin:**
+Browsers refuse `Access-Control-Allow-Credentials: true` when `Access-Control-Allow-Origin: *`. This is a browser CORS spec enforcement. For MCP Inspector to work with credentials from a browser, either:
+- Set explicit origins: `['http://localhost:6274', 'http://localhost:5173']` (most correct for POC)
+- OR: MCP Inspector may use non-credentialed requests for the SSE handshake (X-API-Key sent as query param or in the URL) — test to confirm
+
+**To apply (Rob runs this):**
+```powershell
+$env:KONNECT_PAT = '<your-pat>'
+.\scripts\fix-cors-key-routes.ps1
+```
+
+**Files added:**
+- `scripts/fix-cors-key-routes.ps1` — full CORS update with live verification
+
+### 2026-06-20T02:05:56Z — CORS Wildcard + Credentials: Localhost-Specific Origins Fix
+
+**Context:** Rob ran `fix-cors-key-routes.ps1` (set `origins: ['*']`, `credentials: true`) but MCP Inspector in browser still showed "Failed to fetch".
+
+**Live gateway check after fix-cors-key-routes.ps1:**
+OPTIONS `/mcp/key/sse` with `Origin: http://localhost:6274` returned:
+```
+Access-Control-Allow-Origin: http://localhost:6274   ← Kong reflects specific origin, not *
+Access-Control-Allow-Credentials: true
+Access-Control-Allow-Headers: Content-Type,X-API-Key,Authorization
+Access-Control-Allow-Methods: GET,POST,OPTIONS
+Access-Control-Max-Age: 3600
+```
+
+**Kong CORS behaviour clarified:** Kong with `origins: ['*']` and `credentials: true` does NOT send `Allow-Origin: *`. It reflects back the actual request `Origin` header. This is CORS-spec-correct and browsers accept it. However, there's a timing/propagation window — if Rob tested before the Konnect dataplane pushed the config to the ACA container, he would have seen the old wildcard response.
+
+**Fix: `scripts/fix-cors-localhost.ps1`**
+Replaces `origins: ['*']` with explicit localhost origins:
+- `http://localhost:6274` — MCP Inspector default port
+- `http://127.0.0.1:6274` — IP-literal form
+- `http://localhost:*` — Kong 3.x glob for any other localhost port
+
+This is the more explicit and correct production-POC config. Kong will always reflect back the exact matching origin so `credentials: true` works correctly.
+
+**Run:**
+```powershell
+$env:KONNECT_PAT = '<your-pat>'
+.\scripts\fix-cors-localhost.ps1
+```
+
+**Files added:**
+- `scripts/fix-cors-localhost.ps1`
+
+### 2026-06-20T02:21:40Z — MCP Inspector v0.22.0 Sends x-custom-auth-headers
+
+**Root cause confirmed from browser console:**
+```
+Request header field x-custom-auth-headers is not allowed by
+Access-Control-Allow-Headers in preflight response
+```
+
+MCP Inspector v0.22.0 sends a custom `x-custom-auth-headers` field in its OPTIONS preflight. This header was not in the CORS `headers` list on `mcp-key-service`, so every preflight was blocked — regardless of origin config.
+
+**Fix:** Added `x-custom-auth-headers` to CORS allowed headers via `scripts/fix-cors-add-inspector-header.ps1`.
+
+Final `headers` list: `["Content-Type", "X-API-Key", "Authorization", "x-custom-auth-headers"]`
+
+The script is additive (appends to whatever headers are already set) and idempotent (skips if already present). Includes live preflight verification simulating MCP Inspector's exact request.
+
+**Files added:**
+- `scripts/fix-cors-add-inspector-header.ps1`
+
+**Key lesson:** When debugging "Failed to fetch" in a browser, always check the exact preflight `Access-Control-Request-Headers` the browser sends — each tool version may add its own custom headers that must be explicitly allowed in the CORS config.
+
+### 2026-06-20T09:55:54Z — API Key Rotation (Exposed Key)
+
+**Trigger:** Old key `e2ba9eeb...` was exposed in documentation and must be treated as compromised.
+
+**New key generated:**
+```
+357aa9605e86ddb905592af10481f880756d5c248a53656f3dc0179fbc51bb3d
+```
+Generated with .NET `RandomNumberGenerator` (crypto-strength RNG, 32 bytes → 64 hex chars).
+
+**What was completed:**
+- `api-key-config.json` updated with new key (marked `rotation_status: pending-konnect-push`)
+- `scripts/rotate-api-key.ps1` created — reusable rotation script for future key cycles
+- `.squad/decisions/inbox/fenster-api-key-rotation.md` written
+
+**What is pending:**
+- Konnect API calls to DELETE old credential and CREATE new one require `$env:KONNECT_PAT`, which was not available in the execution environment (Azure Key Vault `kv-kong-aca-f9luor` has public network access disabled).
+- Rob must run: `$env:KONNECT_PAT = '<pat>'; .\scripts\rotate-api-key.ps1 -NewKey "357aa9605e86ddb905592af10481f880756d5c248a53656f3dc0179fbc51bb3d"`
+
+**Consumer reference:**
+- `foundry-mcp-client` → consumer ID `43222d18-16b5-482a-b7c8-b0ad13e06c8a`
+- Control plane: `1933cbf7-093d-4e84-a6d7-8e553c34c9a7`
+
+**Key lesson — rotation procedure:**
+- Never update `api-key-config.json` BEFORE the Konnect credential is pushed. The file should reflect the live state, not a desired state — or at minimum include a clear `rotation_status` field indicating it's pending.
+- Always use the rotation script with `-SkipSmokeTest` flag if running from an environment without outbound HTTPS to the gateway.
+- Konnect `key-auth` credential rotation: DELETE old → CREATE new (no PATCH on credentials). The `id` of the new credential changes so any IaC or audit logs should reference the new ID after rotation.
+- 90-day rotation cadence: next rotation due ~2026-09-18.
+
+**Files added/modified:**
+- `scripts/rotate-api-key.ps1` — reusable key rotation script
+- `api-key-config.json` — updated with new key (pending Konnect push)
+
