@@ -4,7 +4,7 @@ Persistent memory agent that maintains context across sessions.
 
 ## Project Context
 
-**Project:** msf-kong-ai-gateway-test1
+**Project:** msfoundry-kong-ai-gateway
 
 
 ## Responsibilities

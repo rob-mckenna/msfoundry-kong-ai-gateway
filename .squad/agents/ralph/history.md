@@ -1,6 +1,6 @@
 # Project Context
 
-- **Project:** msf-kong-ai-gateway-test1
+- **Project:** msfoundry-kong-ai-gateway
 - **Created:** 2026-06-16
 
 ## Core Context

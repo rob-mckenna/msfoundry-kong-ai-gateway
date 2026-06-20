@@ -57,8 +57,8 @@ If you prefer to do it by hand:
 #### 1. Clone the repo
 
 ```bash
-git clone https://github.com/<org>/msf-kong-ai-gateway-test1
-cd msf-kong-ai-gateway-test1
+git clone https://github.com/<org>/msfoundry-kong-ai-gateway
+cd msfoundry-kong-ai-gateway
 ```
 
 #### 2. Install Node dependencies (MCP Server and Mock API)

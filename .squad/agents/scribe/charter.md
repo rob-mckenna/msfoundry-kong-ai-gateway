@@ -4,7 +4,7 @@ Documentation specialist maintaining history, decisions, and technical records.
 
 ## Project Context
 
-**Project:** msf-kong-ai-gateway-test1
+**Project:** msfoundry-kong-ai-gateway
 
 
 ## Responsibilities

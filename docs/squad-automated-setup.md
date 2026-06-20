@@ -93,7 +93,7 @@ The safest Windows-first sequence for McManus/Fenster is:
 #### 0. Install `kongctl` locally for this session
 
 ```powershell
-$repo = "C:\Repos\msf-kong-ai-gateway-test1"
+$repo = "C:\Repos\msfoundry-kong-ai-gateway"
 Set-Location $repo
 
 $cliDir = Join-Path $repo "tools\kongctl"

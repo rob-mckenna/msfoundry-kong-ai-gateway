@@ -1,6 +1,6 @@
 # Squad Team
 
-> msf-kong-ai-gateway-test1
+> msfoundry-kong-ai-gateway
 
 ## Coordinator
 
